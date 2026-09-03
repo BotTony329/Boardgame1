@@ -24,6 +24,12 @@ export async function handlePolicyRequest(body) {
     energy: Number(state.energy) || 0,
     landYield: state.landYield && typeof state.landYield === 'object' ? state.landYield : undefined,
     statutes: Array.isArray(state.statutes) ? state.statutes.slice(0, 5).map((s) => String(s).slice(0, 60)) : [],
+    activePolicies: Array.isArray(state.activePolicies)
+      ? state.activePolicies.slice(0, 4).map((p) => ({
+        text: String(p?.text || '').slice(0, 60),
+        potency: Number(p?.potency) || 0,
+      }))
+      : [],
     recentPolicies: Array.isArray(state.recentPolicies)
       ? state.recentPolicies.slice(-3).map((p) => String(p).slice(0, 80))
       : [],

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, playerNation, applyResolvedTurn } from '../public/js/engine/game.js';
+import { newGame, playerNation, resolveNextTurn } from '../public/js/engine/game.js';
 import {
   getRelation, adjustRelation, relationLabel, atWar,
   establishRoute, breakRoute, routeBetween, routeYield, resolveTrade,
@@ -94,13 +94,12 @@ test('战争清扫：交国关系钉在 −40、商路断绝并记入大事记',
 
 test('回合结算完整管线：多回合运转不崩，事件层正常推进', () => {
   const game = makeGame();
+  let lastReport = null;
   for (let i = 0; i < 25 && game.phase === 'playing'; i++) {
-    applyResolvedTurn(game, {
-      verdict: 'neutral', narrative: '如常', brief: '清丈田亩、登记丁口', domain: 'politics',
-      populationChangePct: 0, stabilityChange: 0, appealChange: 0,
-      resourceChanges: { food: 0, minerals: 0, energy: 0 },
-    });
+    lastReport = resolveNextTurn(game);
   }
+  assert.ok(lastReport, '应产出回合报告');
+  assert.ok(Number.isFinite(lastReport.deltas.pop), '报告应含聚合国力变化');
   assert.ok(Array.isArray(game.tradeRoutes));
   assert.ok(typeof game.relations === 'object');
 });

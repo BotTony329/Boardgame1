@@ -5,30 +5,9 @@ import { coronationDue, republicDue, crownKingdom, stageLabel } from './nation.j
 import { civTierOf } from './civ.js';
 import { upsertStatute } from './statutes.js';
 import { rollWorldEvents, aiDiplomacy, resolveTrade, sweepHostilities } from './world.js';
+import { applyActivePolicies } from './policies.js';
 
 const clamp01to100 = (v) => Math.max(0, Math.min(100, v));
-
-// 把一条政策裁决效果落到国家状态上，返回变化量供 UI 展示。
-export function applyPolicyEffects(nation, eff) {
-  const before = {
-    pop: nation.pop, stability: nation.stability, appeal: nation.appeal,
-    food: nation.food, minerals: nation.minerals, energy: nation.energy,
-  };
-  nation.pop = Math.max(5, nation.pop * (1 + eff.populationChangePct / 100));
-  nation.stability = clamp01to100(nation.stability + eff.stabilityChange);
-  nation.appeal = clamp01to100(nation.appeal + eff.appealChange);
-  for (const k of ['food', 'minerals', 'energy']) {
-    nation[k] = Math.max(0, nation[k] * (1 + eff.resourceChanges[k] / 100));
-  }
-  return {
-    pop: nation.pop - before.pop,
-    stability: nation.stability - before.stability,
-    appeal: nation.appeal - before.appeal,
-    food: nation.food - before.food,
-    minerals: nation.minerals - before.minerals,
-    energy: nation.energy - before.energy,
-  };
-}
 
 function territoryYield(game, nation) {
   let food = 0, minerals = 0, energy = 0;
@@ -211,29 +190,16 @@ function checkMilestones(game, logs, events) {
   }
 }
 
-// 一回合的完整结算：政策效果 → 经济 → 增长 → 迁移 → AI → 里程碑。
-// 返回 {deltas, logs, events, migrants} 供 UI 渲染回合报告。
-export function resolveTurn(game, playerEffects = null) {
+// 一回合的完整结算：施政兑现 → 经济 → 增长 → 迁移 → 万国事件 → AI → 里程碑。
+// 回合由玩家手动推进（UI 的「进入下一回合」），政策效果在施政期内逐回合自动兑现。
+// 返回 {logs, events, migrants} 供 UI 渲染回合报告。
+export function resolveTurn(game) {
   if (game.phase !== 'playing') return null;
   const logs = [];
   const events = [];
-  const player = game.nations[game.playerId];
 
-  let deltas = null;
-  if (playerEffects) {
-    deltas = applyPolicyEffects(player, playerEffects);
-    // 典章结算：原样续行祖制者守成有序（稳定+1）；改动者承担变法成本（稳定−3），
-    // 且新策入典章成为今后的"现存国策"——修改成本由此进入核心循环
-    if (playerEffects.statute === 'continue') {
-      player.stability = clamp01to100(player.stability + 1);
-      deltas.stability += 1;
-    } else if (playerEffects.statute === 'reform') {
-      player.stability = clamp01to100(player.stability - 3);
-      deltas.stability -= 3;
-      upsertStatute(player, { text: playerEffects.brief, domain: playerEffects.domain, turn: game.turn });
-    }
-    logs.push({ turn: game.turn, kind: 'policy', text: playerEffects.narrative, brief: playerEffects.brief, statute: playerEffects.statute });
-  }
+  // 持续施政：兑现效果、衰减效力、到期入典章
+  applyActivePolicies(game, logs);
 
   for (const nation of Object.values(game.nations)) {
     if (nation.dead) continue;
@@ -260,5 +226,5 @@ export function resolveTurn(game, playerEffects = null) {
   game.turn += 1;
   game.log.push(...logs);
   if (game.log.length > 400) game.log = game.log.slice(-300); // 编年史上限，防止存档无限膨胀
-  return { deltas, logs, events, migrants: Math.round(migrants) };
+  return { logs, events, migrants: Math.round(migrants) };
 }

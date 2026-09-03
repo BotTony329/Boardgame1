@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newGame, playerNation, applyResolvedTurn } from '../public/js/engine/game.js';
+import { newGame, playerNation, enactPolicy, cancelPolicy } from '../public/js/engine/game.js';
 import { heuristicEvaluate } from '../public/js/engine/heuristic.js';
 import { draftStatute, pickStatutes, STATUTE_LIBRARY } from '../public/js/engine/statutes.js';
 import { chooseRepublicType, SAVE_KEY } from '../public/js/engine/game.js';
@@ -64,31 +64,66 @@ test('改制抉择：未到时机不可改制，置位后可定国体', () => {
   assert.equal(game.pendingRepublic, false);
 });
 
-test('政策档案：每道国策连同裁决被完整记录，回合号正确', () => {
+test('颁布施政：变法入列扣稳定并录档案，守成回满效力+1稳定', () => {
   const game = newGame({ nationName: '档案邦', leaderName: '测', seed: 'archive-seed' });
   playerNation(game).food = 99999; // 防饥荒干扰
-  const turnBefore = game.turn;
-  applyResolvedTurn(game, {
-    verdict: 'positive', narrative: '万民称便', brief: '轻徭薄赋，与民休息', domain: 'economy',
-    populationChangePct: 2, stabilityChange: 3, appealChange: 4,
+  const judged = {
+    verdict: 'positive', narrative: '万民称便', populationChangePct: 2,
+    stabilityChange: 3, appealChange: 4,
     resourceChanges: { food: 0, minerals: 0, energy: 0 },
-  });
-  assert.equal(game.policies.length, 1, '应存档一道国策');
+  };
+
+  // 新政 = 变法：−3 稳定、进入施政列表、录入典章与档案
+  const turnBefore = game.turn;
+  let r = enactPolicy(game, judged, { text: '轻徭薄赋，与民休息', domain: 'economy', continuation: false });
+  assert.equal(r.ok, true);
+  assert.equal(r.statuteEffect, 'reform');
+  assert.equal(game.activePolicies.length, 1, '施政应入列');
+  assert.equal(Math.round(playerNation(game).stability), 57, '变法 −3 稳定');
   const p = game.policies[0];
   assert.equal(p.turn, turnBefore, '档案回合号应为颁布时的回合');
   assert.equal(p.text, '轻徭薄赋，与民休息');
-  assert.equal(p.domain, 'economy');
   assert.equal(p.verdict, 'positive');
-  assert.equal(p.pop, 2);
-  // 旧存档（无 policies 字段）不应崩：applyResolvedTurn 会补建数组
+
+  // 守成 = 同文重申：效力回满、稳定 +1、不新增施政
+  game.activePolicies[0].potency = 40;
+  r = enactPolicy(game, judged, { text: '轻徭薄赋，与民休息', domain: 'economy', continuation: true });
+  assert.equal(r.ok, true);
+  assert.equal(r.statuteEffect, 'continue');
+  assert.equal(game.activePolicies.length, 1, '守成不新增施政');
+  assert.equal(game.activePolicies[0].potency, 100, '守成回满效力');
+  assert.equal(Math.round(playerNation(game).stability), 58, '守成 +1 稳定');
+  assert.equal(game.policies.length, 2, '档案每次颁布都记录');
+
+  // 旧存档（无 policies/activePolicies 字段）不应崩
   const legacy = newGame({ nationName: '旧档邦', leaderName: '测', seed: 'legacy-seed' });
   delete legacy.policies;
-  applyResolvedTurn(legacy, {
-    verdict: 'neutral', narrative: '如常', brief: '维持现状', domain: 'politics',
-    populationChangePct: 0, stabilityChange: 0, appealChange: 0,
-    resourceChanges: { food: 0, minerals: 0, energy: 0 },
-  });
+  delete legacy.activePolicies;
+  r = enactPolicy(legacy, { ...judged, verdict: 'neutral' }, { text: '维持现状', domain: 'politics', continuation: false });
+  assert.equal(r.ok, true);
   assert.equal(legacy.policies.length, 1);
+  assert.equal(legacy.activePolicies.length, 1);
+});
+
+test('施政上限与取消：政务满 4 道拒颁新策，罢行即刻停止', () => {
+  const game = newGame({ nationName: '上限邦', leaderName: '测', seed: 'cap-seed' });
+  playerNation(game).food = 99999;
+  const judged = {
+    verdict: 'neutral', narrative: '如常', populationChangePct: 0, stabilityChange: 0,
+    appealChange: 0, resourceChanges: { food: 0, minerals: 0, energy: 0 },
+  };
+  for (let i = 0; i < 4; i++) {
+    const r = enactPolicy(game, judged, { text: `施政之策第${i}道：劝农桑、修水利`, domain: 'economy', continuation: false });
+    assert.equal(r.ok, true, `第 ${i + 1} 道应可颁布`);
+    playerNation(game).stability = 60; // 重置，避免连续变法把稳定扣光影响后续断言
+  }
+  const r = enactPolicy(game, judged, { text: '第五道施政：大开互市', domain: 'economy', continuation: false });
+  assert.equal(r.ok, false, '政务满 4 道应拒绝新策');
+
+  const cancel = cancelPolicy(game, game.activePolicies[0].id);
+  assert.equal(cancel.ok, true);
+  assert.equal(game.activePolicies.length, 3, '罢行后腾出政务');
+  assert.equal(enactPolicy(game, judged, { text: '第五道施政：大开互市', domain: 'economy', continuation: false }).ok, true);
 });
 
 test('典章制度：开局随机继承两道祖制，同种子可复现，逐回合轮转预填', () => {
@@ -112,32 +147,29 @@ test('典章制度：开局随机继承两道祖制，同种子可复现，逐�
   assert.equal(pickStatutes(3).length, 3);
 });
 
-test('守成与变法：续行祖制稳定+1，改动稳定−3且新策录入典章', () => {
+test('守成与变法：新政录入典章置前，续行不增典章', () => {
   const game = newGame({ nationName: '变法邦', leaderName: '测', seed: 'reform-seed' });
   const n = playerNation(game);
   n.food = 99999;
-  const draft = draftStatute(n, game.turn);
+  const statutesBefore = n.statutes.length;
 
-  const stab0 = n.stability;
-  applyResolvedTurn(game, {
-    verdict: 'neutral', narrative: '一如常年', brief: draft.text, domain: draft.domain,
-    populationChangePct: 0, stabilityChange: 0, appealChange: 0,
-    resourceChanges: { food: 0, minerals: 0, energy: 0 }, statute: 'continue',
-  });
-  assert.equal(Math.round(n.stability), stab0 + 1, '守成应+1稳定');
-  assert.equal(n.statutes.length, 2, '守成不新增典章');
-
-  const stab1 = n.stability;
   const newPolicyText = '开凿新渠引水入城，垦荒千亩，减田租至二十分之一';
-  applyResolvedTurn(game, {
-    verdict: 'positive', narrative: '气象一新', brief: newPolicyText, domain: 'economy',
-    populationChangePct: 2, stabilityChange: 0, appealChange: 3,
-    resourceChanges: { food: 0, minerals: 0, energy: 0 }, statute: 'reform',
-  });
-  assert.equal(Math.round(n.stability), stab1 - 3, '变法应−3稳定');
-  assert.equal(n.statutes.length, 3, '新策应录入典章');
+  const r = enactPolicy(game, {
+    verdict: 'positive', narrative: '气象一新', populationChangePct: 2, stabilityChange: 0,
+    appealChange: 3, resourceChanges: { food: 0, minerals: 0, energy: 0 },
+  }, { text: newPolicyText, domain: 'economy', continuation: false });
+  assert.equal(r.statuteEffect, 'reform');
+  assert.equal(n.statutes.length, statutesBefore + 1, '新策应录入典章');
   assert.equal(n.statutes[0].text, newPolicyText, '新典章置于最前');
-  assert.equal(game.policies[1].statute, 'reform', '政策档案应记录变法');
+
+  // 同文再颁 = 守成续行，典章不重复录入
+  const r2 = enactPolicy(game, {
+    verdict: 'neutral', narrative: '一如常年', populationChangePct: 0, stabilityChange: 0,
+    appealChange: 0, resourceChanges: { food: 0, minerals: 0, energy: 0 },
+  }, { text: newPolicyText, domain: 'economy', continuation: true });
+  assert.equal(r2.statuteEffect, 'continue');
+  assert.equal(n.statutes.length, statutesBefore + 1, '守成不新增典章');
+  assert.equal(game.policies[1].statute, 'continue', '政策档案应记录守成');
 });
 
 test('存档函数在无 localStorage 环境（Node 测试）下安全降级', () => {

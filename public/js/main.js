@@ -1,11 +1,12 @@
 import {
-  newGame, loadGame, clearSave, applyResolvedTurn, doConscript, doAttack,
-  chooseRepublicType, playerNation, doSendEnvoy, doEstablishTrade, doSeverTies,
+  newGame, loadGame, clearSave, doConscript, doAttack, enactPolicy, cancelPolicy,
+  resolveNextTurn, chooseRepublicType, playerNation, doSendEnvoy, doEstablishTrade, doSeverTies,
 } from './engine/game.js';
 import { snapshotForAI } from './engine/nation.js';
 import { attackableCells } from './engine/war.js';
 import { requestPolicyVerdict } from './engine/ai-client.js';
 import { draftStatute } from './engine/statutes.js';
+import { MAX_ACTIVE_POLICIES } from './engine/policies.js';
 import { TERRAINS, RULES } from './engine/constants.js';
 import { render, showModal, toast, setBusy, updateCellInfo } from './ui.js';
 
@@ -56,12 +57,15 @@ function cycleDraft() {
 function updateReformHint() {
   const el = $('reformHint');
   const text = $('policyText').value.trim();
-  if (!ui.currentDraft || !text) { el.textContent = ''; el.className = ''; return; }
-  if (text === ui.currentDraft.text) {
-    el.textContent = '✔ 萧规曹随：原样延续既定国策，稳定 +1';
+  if (!text) { el.textContent = ''; el.className = ''; return; }
+  if ((game.activePolicies || []).some((p) => p.text === text)) {
+    el.textContent = '✔ 守成续行：重申现行施政，效力回满，稳定 +1';
     el.className = 'hint-continue';
+  } else if ((game.activePolicies || []).length >= MAX_ACTIVE_POLICIES) {
+    el.textContent = '⚠ 政务已满（至多 4 道施行）：请先罢行一道，方可颁布新策';
+    el.className = 'hint-reform';
   } else {
-    el.textContent = '✦ 变法更张：改动既定国策，稳定 −3（新策将录入典章）';
+    el.textContent = '✦ 变法更张：颁布新施政（持续生效），稳定 −3，新策录入典章';
     el.className = 'hint-reform';
   }
 }
@@ -94,8 +98,8 @@ function showNewGameModal() {
     html: `
       <p class="hint">你将以一个随机格子的部落首领起步，凭文字政策招揽散落大陆的人口，聚众建国、称王、改制，直至纵横天下。</p>
       <ul class="rulelist">
-        <li>每回合须颁布一条<b>自由文字国策</b>，由千问3.7 扮演的「天命史官」裁决其真实效果——得民心者人口来投，失民心者流民四散。</li>
-        <li>开局随机继承两道<b>现存典章</b>（既有国策）。原样颁布为<b>守成</b>（稳定+1）；改动为<b>变法</b>（稳定−3），新策录入典章传之后世。</li>
+        <li>以文字<b>颁布施政</b>，由千问3.7 裁定力度。施政<b>持续生效</b>（逐回合兑现、效力随岁月衰减），直至效力耗尽或你下诏罢行；时间由你手动推进（「进入下一回合」）。</li>
+        <li>开局随机继承两道<b>现存典章</b>。续行现行施政为<b>守成</b>（稳定+1）；颁布新策为<b>变法</b>（稳定−3），新策录入典章。</li>
         <li>人口达到 <b>600</b> 方可征兵，人口 <b>800</b> 加冕为王，人口 <b>5000</b> 且安定可改制共和。</li>
         <li>城市与士兵随<b>文明等级</b>换装：治世城郭日盛，苛政则民生凋敝、等级跌落。</li>
         <li>每国资源禀赋不同：粮、矿、能决定你养得起多少兵、打得起多少仗。</li>
@@ -127,58 +131,72 @@ function showNewGameModal() {
 }
 
 // ---------- 政策回合 ----------
+// ---------- 颁布施政（不推进回合；施政持续生效至取消或效力耗尽） ----------
 async function submitPolicy() {
   if (busy || game.phase !== 'playing') return;
   const text = $('policyText').value.trim();
-  if (!text) { toast('政策不可为空——哪怕只写「与民休息」四字。'); return; }
+  if (!text) { toast('施政不可为空——哪怕只写「与民休息」四字。'); return; }
 
   busy = true;
   setBusy(true);
   try {
     const snapshot = snapshotForAI(game, playerNation(game));
-    // 与预填典章逐字一致 = 萧规曹随；否则为变法（引擎将结算相应的稳定度增减）
-    const continuation = Boolean(ui.currentDraft) && text === ui.currentDraft.text;
+    // 与现行施政同文 = 重申续行（守成）；否则为颁布新策（变法）
+    const continuation = (game.activePolicies || []).some((p) => p.text === text);
     const result = await requestPolicyVerdict(snapshot, { text, domain: ui.domain, continuation });
-    const effects = {
-      ...result, brief: text, domain: ui.domain,
-      statute: continuation ? 'continue' : (ui.currentDraft ? 'reform' : undefined),
-    };
-    const report = applyResolvedTurn(game, effects);
-    // 进入下回合：预填典章按轮转刷新，改革提示随之更新
-    ui.draftOffset = 0;
-    ui.currentDraft = draftStatute(playerNation(game), game.turn);
-    renderAll();
+    const r = enactPolicy(game, result, { text, domain: ui.domain, continuation });
     busy = false;
     setBusy(false);
-    // 保留原文作为下一回合的底稿，方便在现有政策基础上修改
-    $('policyText').value = text;
+    if (!r.ok) { toast(r.reason); return; }
+    renderAll();
     updateReformHint();
-    showTurnReport(result, report);
+    showEnactReport(result, r.statuteEffect);
   } catch (err) {
     busy = false;
     setBusy(false);
-    toast('回合结算出错：' + err.message);
+    toast('颁布出错：' + err.message);
   }
 }
 
-function showTurnReport(result, report) {
-  const d = report?.deltas;
+// 颁布回执：只确认施政入列，不结算回合
+function showEnactReport(result, statuteEffect) {
   const verdictName = { positive: '民心归附', neutral: '波澜不惊', negative: '怨声四起' }[result.verdict];
-  const deltaRow = (label, v, isPct) =>
-    `<div class="kv"><span class="k">${label}</span><span class="${v >= 0 ? 'up' : 'down'}">${isPct ? signPct(v) : sign(v)}</span></div>`;
-  const statuteTag = result.statute === 'continue'
-    ? '<span class="verdict positive">萧规曹随 · 稳定+1</span>'
-    : result.statute === 'reform'
-      ? '<span class="verdict negative">变法更张 · 稳定−3</span>'
-      : '';
-
+  const statuteTag = statuteEffect === 'continue'
+    ? '<span class="verdict positive">守成续行 · 效力回满 · 稳定+1</span>'
+    : '<span class="verdict negative">变法更张 · 稳定−3</span>';
   showModal({
-    title: '国策实录',
+    title: '颁布实录',
     html: `
     <span class="verdict ${result.verdict}">${verdictName}</span>
     ${statuteTag}
     ${result.source === 'fallback' ? '<span class="verdict fallback-tag">离线·启发式裁定</span>' : '<span class="verdict fallback-tag">千问史官裁定</span>'}
     <p>${result.narrative || '史官对此缄默不语。'}</p>
+    <p class="hint">此政已列入施政，逐回合生效；效力随岁月衰减，耗尽后载入典章。可随时下诏罢行。点「进入下一回合」推进时间。</p>
+    ${result.risks?.length ? `<p class="risks">⚠ ${result.risks.join('；')}</p>` : ''}`,
+  });
+}
+
+// ---------- 手动推进回合 ----------
+function nextTurn() {
+  if (busy || game.phase !== 'playing') return;
+  const report = resolveNextTurn(game);
+  if (!report) return;
+  ui.draftOffset = 0;
+  ui.currentDraft = draftStatute(playerNation(game), game.turn);
+  renderAll();
+  updateReformHint();
+  showTurnReport(report);
+}
+
+function showTurnReport(report) {
+  const d = report?.deltas;
+  const deltaRow = (label, v) =>
+    `<div class="kv"><span class="k">${label}</span><span class="${v >= 0 ? 'up' : 'down'}">${sign(v)}</span></div>`;
+
+  showModal({
+    title: `岁末结算 · 第 ${game.turn - 1} 年`,
+    html: `
+    <p class="hint">本年国力变化（含施政、生产、迁移与万国事件）：</p>
     ${d ? `<div class="deltas">
       ${deltaRow('人口', d.pop)}
       ${deltaRow('稳定度', d.stability)}
@@ -187,8 +205,7 @@ function showTurnReport(result, report) {
       ${deltaRow('矿产', d.minerals)}
       ${deltaRow('能源', d.energy)}
     </div>` : ''}
-    ${report?.migrants ? `<p class="hint">本回合四方共有约 ${report.migrants} 名散落部民迁入列国。</p>` : ''}
-    ${result.risks?.length ? `<p class="risks">⚠ ${result.risks.join('；')}</p>` : ''}`,
+    ${report?.migrants ? `<p class="hint">本年四方共有约 ${report.migrants} 名散落部民迁入列国。</p>` : ''}`,
     actions: [{
       label: '继续',
       onClick: (close) => { close(); processEvents(report?.events || []); },
@@ -363,6 +380,7 @@ function showBattleReport(report) {
 // ---------- 事件绑定 ----------
 function bindEvents() {
   $('btnPolicy').addEventListener('click', submitPolicy);
+  $('btnNextTurn').addEventListener('click', nextTurn);
   $('policyText').addEventListener('input', updateReformHint);
   $('policyText').addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitPolicy();
@@ -383,6 +401,11 @@ function bindEvents() {
   // 军事卡按钮是重绘生成的，用事件委托绑定
   document.addEventListener('click', (e) => {
     if (e.target.id === 'btnConscript') onConscript();
+    const cancelBtn = e.target.closest('[data-cancel]');
+    if (cancelBtn) {
+      const r = cancelPolicy(game, cancelBtn.dataset.cancel);
+      if (r.ok) { toast('已下诏罢行该施政'); renderAll(); updateReformHint(); }
+    }
     if (e.target.id === 'btnAttackMode') toggleAttackMode();
     if (e.target.id === 'btnSuggest') cycleDraft();
     if (e.target.id === 'btnArchive') showPolicyArchive();

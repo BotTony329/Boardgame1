@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { civTierOf, armyTierOf, nextCivGap, stageRank } from '../public/js/engine/civ.js';
-import { newGame, playerNation, applyResolvedTurn } from '../public/js/engine/game.js';
+import { newGame, playerNation } from '../public/js/engine/game.js';
+import { resolveTurn } from '../public/js/engine/growth.js';
 
 function nation(over = {}) {
   return { stage: 'tribe', pop: 100, stability: 60, soldiers: 0, ...over };
@@ -52,11 +53,7 @@ test('回合结算联动：达标后 civTier 更新且编年史记录文明演�
   const n = playerNation(game);
   n.pop = 350;   // 满足 2 级：pop≥300 & stab≥40
   n.food = 99999;
-  const report = applyResolvedTurn(game, {
-    verdict: 'neutral', narrative: '如常', brief: '无为而治', domain: 'politics',
-    populationChangePct: 0, stabilityChange: 0, appealChange: 0,
-    resourceChanges: { food: 0, minerals: 0, energy: 0 },
-  });
+  const report = resolveTurn(game);
   assert.equal(n.civTier, 2, '首回合应完成等级初始化并升至 2 级');
   assert.ok(report.logs.some((e) => e.kind === 'milestone' && e.text.includes('篝火村落')), '编年史应记录文明演进');
 });

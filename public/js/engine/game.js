@@ -4,8 +4,9 @@ import { resolveTurn } from './growth.js';
 import { conscript, attackableCells, resolveAttack } from './war.js';
 import { hashSeed, mulberry32, pick } from './rng.js';
 import { RULES, TERRAINS } from './constants.js';
-import { pickStatutes } from './statutes.js';
+import { pickStatutes, upsertStatute } from './statutes.js';
 import { getRelation, adjustRelation, establishRoute, breakRoute, routeBetween, routeYield } from './world.js';
+import { policyFromVerdict, MAX_ACTIVE_POLICIES } from './policies.js';
 
 export const SAVE_KEY = 'politgrid_save_v1';
 
@@ -67,6 +68,7 @@ export function newGame({ nationName, leaderName, seed }) {
     nations: { p1: player, ai0: aiNations[0], ai1: aiNations[1], ai2: aiNations[2] },
     relations: {},      // 邦交关系表（engine/world.js），键为 "a|b"（字典序）
     tradeRoutes: [],    // 现存商路
+    activePolicies: [], // 施政中（engine/policies.js），逐回合生效直至效力耗尽或手动取消
     log: [{
       turn: 1, kind: 'milestone',
       text: `新纪元元年：${player.leader}率族人在${TERRAINS[world.cells[playerCell].t].name}上点燃第一堆篝火，「${player.name}」于此立邦。天下散落部民无数，皆可被善政所感召。`,
@@ -101,6 +103,7 @@ export function loadGame() {
     }
     game.relations = game.relations || {};
     game.tradeRoutes = game.tradeRoutes || [];
+    game.activePolicies = game.activePolicies || [];
     return game;
   } catch {
     return null;
@@ -113,23 +116,87 @@ export function clearSave() {
 
 // —— 高层动作：UI 只调这三个，副作用与编年史记录集中在此 ——
 
-export function applyResolvedTurn(game, effects) {
-  const turn = game.turn; // resolveTurn 内部会自增，档案要记颁布时的回合
-  const report = resolveTurn(game, effects);
+// —— 施政（持续政策）——
+// 颁布：AI 裁决力度 → 折算为逐回合固定量 → 进入施政列表。
+// 与现行施政同文 = 守成续行（效力回满、稳定+1）；新策 = 变法更张（稳定−3）并录入典章。
+// 回合由「进入下一回合」手动推进，施政在结算时自动兑现。
+export function enactPolicy(game, judged, { text, domain, continuation }) {
+  const nation = playerNation(game);
+  if (game.phase !== 'playing') return { ok: false, reason: '国祚已终，无可施政' };
+  game.activePolicies = game.activePolicies || [];
+
+  const existing = game.activePolicies.find((p) => p.text === text);
+  let statuteEffect;
+  if (existing) {
+    existing.potency = 100;
+    nation.stability = Math.min(100, nation.stability + 1);
+    statuteEffect = 'continue';
+    game.log.push({ turn: game.turn, kind: 'policy', brief: text, statute: 'continue', text: `${nation.name}重申「${String(text).slice(0, 20)}…」之政，萧规曹随，民心益安。` });
+  } else {
+    if (game.activePolicies.length >= MAX_ACTIVE_POLICIES) {
+      return { ok: false, reason: `政务已满（至多 ${MAX_ACTIVE_POLICIES} 道施行），请先取消一道` };
+    }
+    const policy = policyFromVerdict(judged, {
+      turn: game.turn, domain, text,
+      stock: { pop: nation.pop, food: nation.food, minerals: nation.minerals, energy: nation.energy },
+    });
+    game.activePolicies.push(policy);
+    nation.stability = Math.max(0, nation.stability - 3);
+    statuteEffect = 'reform';
+    upsertStatute(nation, { text, domain, turn: game.turn });
+    game.log.push({ turn: game.turn, kind: 'policy', brief: text, statute: 'reform', text: judged.narrative });
+  }
+
   game.policies = game.policies || [];
   game.policies.push({
-    turn,
-    domain: effects.domain || '',
-    text: effects.brief || '',
-    verdict: effects.verdict,
-    narrative: effects.narrative,
-    pop: effects.populationChangePct,
-    stab: effects.stabilityChange,
-    appeal: effects.appealChange,
-    statute: effects.statute || null,
+    turn: game.turn,
+    domain: domain || '',
+    text,
+    verdict: judged.verdict,
+    narrative: judged.narrative,
+    pop: judged.populationChangePct,
+    stab: judged.stabilityChange,
+    appeal: judged.appealChange,
+    statute: statuteEffect,
   });
   saveGame(game);
+  return { ok: true, statuteEffect, policy: existing };
+}
+
+// 手动取消施政：即刻停止兑现（祖制仍留存典章）
+export function cancelPolicy(game, policyId) {
+  const nation = playerNation(game);
+  const policy = (game.activePolicies || []).find((p) => p.id === policyId);
+  if (!policy) return { ok: false, reason: '查无此政' };
+  game.activePolicies = game.activePolicies.filter((p) => p.id !== policyId);
+  game.log.push({
+    turn: game.turn, kind: 'policy',
+    text: `${nation.name}下诏罢行「${String(policy.text).slice(0, 20)}${policy.text.length > 20 ? '…' : ''}」之政。`,
+  });
+  saveGame(game);
+  return { ok: true };
+}
+
+// 手动进入下一回合：结算施政与天下大势，返回聚合的国力变化
+export function resolveNextTurn(game) {
+  const nation = playerNation(game);
+  const before = statSnapshot(nation);
+  const report = resolveTurn(game);
+  if (!report) return null;
+  report.deltas = diffStats(before, statSnapshot(nation));
+  saveGame(game);
   return report;
+}
+
+function statSnapshot(nation) {
+  return {
+    pop: nation.pop, stability: nation.stability, appeal: nation.appeal,
+    food: nation.food, minerals: nation.minerals, energy: nation.energy,
+  };
+}
+
+function diffStats(before, after) {
+  return Object.fromEntries(Object.keys(before).map((k) => [k, after[k] - before[k]]));
 }
 
 export function doConscript(game, count) {

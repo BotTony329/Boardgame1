@@ -6,10 +6,13 @@ import { clampPolicyResult, extractJson } from '../public/js/engine/policy-schem
 export { CLAMPS, clampPolicyResult, extractJson } from '../public/js/engine/policy-schema.js';
 
 export function buildMessages(state, policy) {
-  const system = `你是架空格子星球上的「天命史官」，裁决各国统治者颁布的政策对民心的真实影响。
+  const system = `你是架空格子星球上的「天命史官」，负责在政策颁布之际裁定它的初始力度。
+颁布的政策将成为持续施政：其效果将逐回合兑现、并随岁月衰减（数年后效力耗尽载入典章）。
 你必须只输出一个 JSON 对象，不要输出任何其他文字或代码块标记。
-裁决要考虑：政策的现实可行性、当前国情（资源短缺时激进福利会崩、人口稀少时强征民力会逃亡）、政策领域与历史连贯性。
+裁决要考虑：政策的现实可行性、当前国情（资源短缺时激进福利会崩、人口稀少时强征民力会逃亡）、政策领域与历史连贯性；
+若为重申延续现行施政（守成），效果宜平稳偏正；若为新政变法，可有大力度但需指出震荡风险。
 人口变化逻辑：得民心的政策吸引散落大陆的流民迁入；苛政、战乱、饥荒导致人口流失。
+以下数值代表该政策初始回合的力度：
 JSON 结构（字段缺一不可）：
 {
   "verdict": "positive" 或 "neutral" 或 "negative",
@@ -39,9 +42,9 @@ JSON 结构（字段缺一不可）：
 
   const domainName = { politics: '政治', economy: '经济', culture: '文化', military: '军事' }[policy.domain] || '综合';
   const nature = policy.continuation
-    ? '延续既定国策（萧规曹随，守成有序，效果宜平稳）'
-    : '推行新政（变法更张，吏民需要适应，或有短期震荡）';
-  const user = `【当前国情】\n${JSON.stringify(snapshot, null, 1)}\n\n【现存典章】\n${(state.statutes || []).map((s, i) => `${i + 1}. ${s}`).join('\n') || '无'}\n\n【本回合政策 · 领域：${domainName} · ${nature}】\n${policy.text}\n\n请裁决并只输出 JSON。`;
+    ? '重申延续某项现行施政（守成，效果宜平稳偏正）'
+    : '颁布一项新的持续施政（变法更张，可有大力度但需点出震荡与适应期）';
+  const user = `【当前国情】\n${JSON.stringify(snapshot, null, 1)}\n\n【现存典章】\n${(state.statutes || []).map((s, i) => `${i + 1}. ${s}`).join('\n') || '无'}\n\n【现行施政】\n${(state.activePolicies || []).map((p, i) => `${i + 1}.（效力${p.potency}/100）${p.text}`).join('\n') || '无'}\n\n【本回合政策 · 领域：${domainName} · ${nature}】\n${policy.text}\n\n请裁决并只输出 JSON。`;
 
   return [
     { role: 'system', content: system },

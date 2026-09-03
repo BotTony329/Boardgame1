@@ -92,6 +92,10 @@ export function snapshotForAI(game, nation) {
     energy: nation.energy,
     landYield: res,
     statutes: (nation.statutes || []).map((s) => s.text.slice(0, 60)),
+    activePolicies: (game.activePolicies || []).map((p) => ({
+      text: p.text.slice(0, 60),
+      potency: p.potency,
+    })),
     recentPolicies: game.log
       .filter((e) => e.kind === 'policy' && e.turn > game.turn - 4)
       .map((e) => e.brief)

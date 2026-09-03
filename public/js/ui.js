@@ -6,6 +6,7 @@ import { civTierOf, armyTierOf, nextCivGap } from './engine/civ.js';
 import { drawArt, ART_PATHS } from './engine/art.js';
 import { getRelation, relationLabel, atWar, routeYield } from './engine/world.js';
 import { DIPLO_COSTS, canAfford, playerNation } from './engine/game.js';
+import { MAX_ACTIVE_POLICIES, policyEffectsText } from './engine/policies.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -34,6 +35,7 @@ export function render(game, ui) {
   renderHeader(game);
   renderNationCard(game);
   renderCurrentPolicy(game, ui);
+  renderActivePolicies(game);
   renderMilitaryCard(game, ui);
   renderWorld(game, ui);
   renderLegend(game);
@@ -56,7 +58,28 @@ export function renderCurrentPolicy(game, ui) {
     <div class="statute ${ui.currentDraft?.id === s.id ? 'on' : ''}">
       <span class="st-domain">${DOMAIN_LABEL[s.domain] || ''}</span>${s.text}
     </div>`).join('');
-  el.innerHTML = `<div class="cp-title">现存典章 · 原样颁布 <b class="good">稳定+1</b> / 改动 <b class="bad">稳定−3</b></div>${items}`;
+  el.innerHTML = `<div class="cp-title">现存典章 · 可作为施政底稿（续行现行施政 <b class="good">稳定+1</b> / 颁布新策 <b class="bad">稳定−3</b>）</div>${items}`;
+}
+
+// 施政中：持续生效的政策，效力逐回合衰减；可随时下诏罢行
+export function renderActivePolicies(game) {
+  const el = $('activePolicies');
+  const list = game.activePolicies || [];
+  if (list.length === 0) {
+    el.innerHTML = '<div class="hint" style="margin-top:10px">国中暂无施行之政。颁布施政后将持续生效，直至效力耗尽或下诏罢行。</div>';
+    return;
+  }
+  const rows = list.map((p) => `
+    <div class="ap-row">
+      <div class="ap-top">
+        <span class="st-domain">${DOMAIN_LABEL[p.domain] || ''}</span>
+        <span class="ap-text">${p.text}</span>
+        <button class="ghost small" data-cancel="${p.id}">罢行</button>
+      </div>
+      <div class="hint">${policyEffectsText(p)} · 效力 ${Math.round(p.potency)}/100</div>
+      <div class="potency"><i style="width:${Math.max(0, p.potency)}%"></i></div>
+    </div>`).join('');
+  el.innerHTML = `<div class="ap-head">施政中（${list.length}/${MAX_ACTIVE_POLICIES}）</div>${rows}`;
 }
 
 function renderHeader(game) {
@@ -733,5 +756,7 @@ export function toast(msg) {
 export function setBusy(busy) {
   const btn = $('btnPolicy');
   btn.disabled = busy;
-  btn.textContent = busy ? '天命史官推演中…' : '颁布政策';
+  btn.textContent = busy ? '天命史官推演中…' : '颁布施政';
+  const next = $('btnNextTurn');
+  if (next) next.disabled = busy;
 }

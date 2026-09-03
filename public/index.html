@@ -47,7 +47,7 @@
 
     <div class="card policy-card">
       <div class="card-heading">
-        <div><span class="eyebrow">STATECRAFT</span><h3>颁布国策</h3></div>
+        <div><span class="eyebrow">STATECRAFT</span><h3>施政</h3></div>
         <span class="card-tools">
           <button id="btnArchive" class="ghost small">政策档案</button>
           <button id="btnSuggest" class="ghost small">换一策</button>
@@ -56,12 +56,14 @@
       <div id="currentPolicy"></div>
       <div id="domainChips"></div>
       <textarea id="policyText" rows="5"
-        placeholder="以文字颁布本回合国策。例如：轻徭薄赋，开仓放粮赈济流民；兴修水利、垦荒屯田；广设医馆学堂；与四邻开互市……"></textarea>
+        placeholder="以文字颁布施政。例如：轻徭薄赋，开仓放粮赈济流民；兴修水利、垦荒屯田；广设医馆学堂；与四邻开互市……"></textarea>
       <div id="reformHint"></div>
       <div class="row spread">
-        <span id="aiHint">由千问3.7 扮演天命史官裁决政策效果</span>
-        <button id="btnPolicy">颁布政策</button>
+        <span id="aiHint">千问3.7 裁定力度 · 施政持续生效、效力随岁月衰减</span>
+        <button id="btnPolicy">颁布施政</button>
       </div>
+      <div id="activePolicies"></div>
+      <button id="btnNextTurn" class="next-turn">结束本回合 · 进入下一年</button>
     </div>
 
     <div class="card" id="militaryCard"></div>
