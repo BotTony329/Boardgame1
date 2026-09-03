@@ -8,7 +8,7 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="brand">格子天下<span class="sub">PolitGrid</span></div>
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>格子天下<small>POLITGRID</small></span></div>
   <div id="nationBadge"></div>
   <div id="resBar"></div>
   <button id="btnNewGame" class="ghost">新开局</button>
@@ -16,18 +16,24 @@
 
 <main>
   <section id="mapPane">
-    <canvas id="map"></canvas>
-    <div id="mapLegend"></div>
-    <div id="cellInfo">点击格子查看详情</div>
+    <div class="panel-heading map-heading">
+      <div><span class="eyebrow">WORLD ATLAS</span><h2>天下舆图</h2></div>
+      <span class="panel-note">疆域、聚落与山川资源</span>
+    </div>
+    <div class="map-frame"><canvas id="map"></canvas></div>
+    <div class="map-footer">
+      <div id="mapLegend"></div>
+      <div id="cellInfo">点击格子查看详情</div>
+    </div>
   </section>
 
   <aside id="sidePane">
     <div class="card" id="nationCard"></div>
 
-    <div class="card">
-      <div class="row spread" style="margin:0 0 10px">
-        <h3 style="margin:0">颁布国策</h3>
-        <span>
+    <div class="card policy-card">
+      <div class="card-heading">
+        <div><span class="eyebrow">STATECRAFT</span><h3>颁布国策</h3></div>
+        <span class="card-tools">
           <button id="btnArchive" class="ghost small">政策档案</button>
           <button id="btnSuggest" class="ghost small">换一策</button>
         </span>
@@ -48,7 +54,10 @@
 </main>
 
 <section id="logPane">
-  <h3>编年史</h3>
+  <div class="panel-heading">
+    <div><span class="eyebrow">CHRONICLE</span><h2>编年史</h2></div>
+    <span class="panel-note">新事在上，旧事在下</span>
+  </div>
   <div id="logList"></div>
 </section>
 

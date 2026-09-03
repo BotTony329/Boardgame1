@@ -8,6 +8,25 @@ import { drawArt, ART_PATHS } from './engine/art.js';
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
 
+const MAP_ART = [
+  ...Object.keys(TERRAINS).map((terrain) => ART_PATHS.tile(terrain)),
+  ...Object.keys(TERRAINS).flatMap((terrain) => [1, 2, 3].map((variant) => `art/tiles/${terrain}${variant}.png`)),
+  ...Array.from({ length: 5 }, (_, i) => ART_PATHS.city(i + 1, false)),
+  ...Array.from({ length: 5 }, (_, i) => ART_PATHS.city(i + 1, true)),
+  ...Array.from({ length: 4 }, (_, i) => ART_PATHS.unit(i + 1)),
+];
+let latestMapState = null;
+
+// Canvas 不会在图片加载完后自行重绘。统一预载并只刷新地图，
+// 可保证首屏素材出现，同时不让游戏引擎依赖 DOM 生命周期。
+Promise.allSettled(MAP_ART.map((src) => new Promise((resolve) => {
+  const image = new Image();
+  image.onload = image.onerror = resolve;
+  image.src = src;
+}))).then(() => {
+  if (latestMapState) renderMap(latestMapState.game, latestMapState.ui);
+});
+
 // 每回合整体重绘。数据量小（<800 格），全量重绘比增量更新更简单可靠。
 export function render(game, ui) {
   renderHeader(game);
@@ -41,16 +60,17 @@ export function renderCurrentPolicy(game, ui) {
 function renderHeader(game) {
   const n = game.nations[game.playerId];
   $('nationBadge').innerHTML =
-    `<b>${n.name}</b> · ${n.leader}<span class="stage">${stageLabel(n)}</span>`;
+    `<span class="nation-label">治下</span><b>${n.name}</b><span class="leader">${n.leader}</span><span class="stage">${stageLabel(n)}</span>`;
+  const stat = (icon, label, value) => `<span class="stat"><img src="art/ui/${icon}.png" alt=""><span>${label}<b>${value}</b></span></span>`;
   $('resBar').innerHTML = `
-    <span class="stat">回合 <b>${game.turn}</b></span>
-    <span class="stat">👥 人口 <b>${fmt(n.pop)}</b></span>
-    <span class="stat">⚔ 军队 <b>${fmt(n.soldiers)}</b></span>
-    <span class="stat">🌾 粮 <b>${fmt(n.food)}</b></span>
-    <span class="stat">⛏ 矿 <b>${fmt(n.minerals)}</b></span>
-    <span class="stat">⚡ 能 <b>${fmt(n.energy)}</b></span>
-    <span class="stat">✨ 吸引 <b>${Math.round(n.appeal)}</b></span>
-    <span class="stat">⚖ 稳定 <b>${Math.round(n.stability)}</b></span>`;
+    <span class="turn-stat"><span>纪年</span><b>${game.turn}</b></span>
+    ${stat('pop', '人口', fmt(n.pop))}
+    ${stat('army', '军队', fmt(n.soldiers))}
+    ${stat('food', '粮食', fmt(n.food))}
+    ${stat('minerals', '矿产', fmt(n.minerals))}
+    ${stat('energy', '能源', fmt(n.energy))}
+    ${stat('appeal', '吸引', Math.round(n.appeal))}
+    ${stat('stability', '稳定', Math.round(n.stability))}`;
 }
 
 function renderNationCard(game) {
@@ -74,7 +94,7 @@ function renderNationCard(game) {
   const army = armyTierOf(n);
   const gap = nextCivGap(n);
   const civRows = `
-    <div class="kv"><span class="k">🏛 文明</span><span>${civ.level} 级 · ${civ.name}</span></div>
+    <div class="kv civ-row"><span class="k"><img src="art/ui/crown.png" alt="">文明</span><span>${civ.level} 级 · ${civ.name}</span></div>
     <div class="hint">${civ.desc} · 兵制「${army.name}」：${army.desc}</div>
     ${gap ? `<div class="hint">迈向「${gap.tier.name}」还差：${gap.gaps.join('、')}</div>` : '<div class="hint">文明已臻此世之巅。</div>'}
   `;
@@ -130,17 +150,200 @@ export function renderLog(game) {
 // 图例：一眼认出哪个国家是你的
 export function renderLegend(game) {
   const el = $('mapLegend');
-  el.innerHTML = Object.values(game.nations)
+  const nations = Object.values(game.nations)
     .filter((n) => n.cells.length > 0)
     .map((n) => `<span class="legend-item ${n.isPlayer ? 'me' : ''}">
       <i style="background:${n.color}"></i>${n.name}${n.isPlayer ? '（你）' : ''}</span>`)
     .join('');
+  el.innerHTML = `<span class="legend-item terrain-key"><i class="river-key"></i>河流</span>${nations}`;
 }
 
 // ---- 地图渲染 ----
 const CS = 26; // 每格边长（CSS 像素）
+const TERRAIN_HEIGHT = { ocean: 0, beach: 1, plain: 2, desert: 2.2, forest: 2.5, hills: 4, mountain: 6 };
+const riverCache = new WeakMap();
+
+function visualHash(seed, index, salt = 0) {
+  const text = `${seed}:${index}:${salt}`;
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function nearestWaterPath(map, source, joinedRiver) {
+  const { w, h, cells } = map;
+  const dist = new Float64Array(cells.length).fill(Infinity);
+  const previous = new Int32Array(cells.length).fill(-1);
+  const pending = [{ index: source, cost: 0 }];
+  dist[source] = 0;
+  let goal = -1;
+
+  while (pending.length) {
+    pending.sort((a, b) => b.cost - a.cost);
+    const current = pending.pop();
+    if (current.cost !== dist[current.index]) continue;
+    if (current.index !== source && (cells[current.index].t === 'ocean' || joinedRiver.has(current.index))) {
+      goal = current.index;
+      break;
+    }
+    const x = current.index % w;
+    const y = Math.floor(current.index / w);
+    for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const next = ny * w + nx;
+      const rise = Math.max(0, TERRAIN_HEIGHT[cells[next].t] - TERRAIN_HEIGHT[cells[current.index].t]);
+      const step = dx && dy ? 1.42 : 1;
+      const cost = current.cost + step + TERRAIN_HEIGHT[cells[next].t] * .18 + rise * 2.8;
+      if (cost >= dist[next]) continue;
+      dist[next] = cost;
+      previous[next] = current.index;
+      pending.push({ index: next, cost });
+    }
+  }
+
+  if (goal < 0) return [];
+  const path = [];
+  for (let cursor = goal; cursor >= 0; cursor = previous[cursor]) {
+    path.push(cursor);
+    if (cursor === source) break;
+  }
+  return path.reverse();
+}
+
+// 河流是由现有地形派生的视觉层，不写入地图状态，也不参与任何规则结算。
+function riversFor(game) {
+  if (riverCache.has(game.map)) return riverCache.get(game.map);
+  const { w, cells } = game.map;
+  const candidates = cells
+    .map((cell, index) => ({ cell, index }))
+    .filter(({ cell }) => cell.t === 'mountain' || cell.t === 'hills')
+    .sort((a, b) => visualHash(game.seed, a.index, 17) - visualHash(game.seed, b.index, 17));
+  const sourceLimit = Math.max(2, Math.min(5, Math.round(cells.filter((cell) => cell.t !== 'ocean').length / 90)));
+  const sources = [];
+  const joinedRiver = new Set();
+  const paths = [];
+
+  for (const { index } of candidates) {
+    const x = index % w, y = Math.floor(index / w);
+    if (sources.some((other) => Math.hypot(x - other % w, y - Math.floor(other / w)) < 6)) continue;
+    const path = nearestWaterPath(game.map, index, joinedRiver);
+    if (path.length < 4) continue;
+    sources.push(index);
+    paths.push(path);
+    path.slice(0, -1).forEach((cellIndex) => joinedRiver.add(cellIndex));
+    if (sources.length >= sourceLimit) break;
+  }
+  riverCache.set(game.map, paths);
+  return paths;
+}
+
+function drawRivers(ctx, game) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const path of riversFor(game)) {
+    const points = path.map((index, order) => {
+      const jitter = visualHash(game.seed, index, 73 + order);
+      const scale = order === 0 || order === path.length - 1 ? 3 : 12;
+      return {
+        x: (index % game.map.w) * CS + CS / 2 + (((jitter & 255) / 255) - .5) * scale,
+        y: Math.floor(index / game.map.w) * CS + CS / 2 + ((((jitter >>> 8) & 255) / 255) - .5) * scale,
+      };
+    });
+    const stroke = () => {
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length - 1; i++) {
+        const midpoint = { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 };
+        ctx.quadraticCurveTo(points[i].x, points[i].y, midpoint.x, midpoint.y);
+      }
+      ctx.lineTo(points.at(-1).x, points.at(-1).y);
+      ctx.stroke();
+    };
+    ctx.strokeStyle = 'rgba(18, 37, 43, .72)';
+    ctx.lineWidth = 4.4;
+    stroke();
+    ctx.strokeStyle = '#4f91a4';
+    ctx.lineWidth = 2.3;
+    stroke();
+    ctx.strokeStyle = 'rgba(184, 224, 222, .72)';
+    ctx.lineWidth = .65;
+    stroke();
+  }
+  ctx.restore();
+}
+
+function drawTerrainFeature(ctx, terrain, index, x, y, seed) {
+  const random = mulberry32(visualHash(seed, index, 91));
+  ctx.save();
+  if (terrain === 'forest') {
+    const count = 2 + Math.floor(random() * 2);
+    for (let i = 0; i < count; i++) {
+      const cx = x + 6 + random() * 14, cy = y + 7 + random() * 13, radius = 3 + random() * 2;
+      ctx.fillStyle = 'rgba(15, 38, 25, .5)';
+      ctx.beginPath(); ctx.arc(cx + 1, cy + 1.5, radius + .8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = i % 2 ? 'rgba(64, 104, 58, .88)' : 'rgba(48, 88, 52, .9)';
+      ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(151, 174, 102, .38)';
+      ctx.beginPath(); ctx.arc(cx - 1, cy - 1, radius * .42, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (terrain === 'mountain' && random() > .5) {
+    const offset = random() * 5;
+    ctx.fillStyle = 'rgba(41, 42, 41, .72)';
+    ctx.beginPath(); ctx.moveTo(x + 3, y + 22); ctx.lineTo(x + 12 + offset, y + 3); ctx.lineTo(x + 24, y + 22); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(139, 137, 130, .92)';
+    ctx.beginPath(); ctx.moveTo(x + 5, y + 21); ctx.lineTo(x + 12 + offset, y + 4); ctx.lineTo(x + 14 + offset, y + 21); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(225, 220, 201, .64)';
+    ctx.beginPath(); ctx.moveTo(x + 10 + offset, y + 8); ctx.lineTo(x + 12 + offset, y + 4); ctx.lineTo(x + 15 + offset, y + 9); ctx.lineTo(x + 13 + offset, y + 8); ctx.closePath(); ctx.fill();
+  } else if (terrain === 'hills' && random() > .78) {
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(55, 60, 43, .48)'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(x + 12, y + 18, 10, Math.PI * 1.08, Math.PI * 1.9); ctx.stroke();
+    ctx.strokeStyle = 'rgba(202, 191, 128, .58)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x + 11, y + 16, 9, Math.PI * 1.1, Math.PI * 1.88); ctx.stroke();
+  } else if (terrain === 'plain') {
+    ctx.strokeStyle = 'rgba(45, 89, 48, .62)'; ctx.lineWidth = .8;
+    for (let i = 0; i < 3; i++) {
+      const gx = x + 5 + random() * 16, gy = y + 10 + random() * 11;
+      ctx.beginPath(); ctx.moveTo(gx, gy + 4); ctx.lineTo(gx - 1.5, gy); ctx.moveTo(gx, gy + 4); ctx.lineTo(gx + 2, gy + 1); ctx.stroke();
+    }
+  } else if (terrain === 'desert') {
+    ctx.strokeStyle = 'rgba(111, 79, 37, .35)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x + 5, y + 9, 14, .15, 1.75); ctx.stroke();
+  } else if (terrain === 'ocean' && random() > .62) {
+    ctx.strokeStyle = 'rgba(159, 197, 205, .18)'; ctx.lineWidth = .8;
+    ctx.beginPath(); ctx.arc(x + 5, y + 11, 8, .2, 1.2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCoastlines(ctx, w, h, cells) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (let index = 0; index < cells.length; index++) {
+    if (cells[index].t === 'ocean') continue;
+    const x = (index % w) * CS, y = Math.floor(index / w) * CS;
+    const segments = [];
+    if (y > 0 && cells[index - w].t === 'ocean') segments.push([x, y, x + CS, y]);
+    if (y < h - 1 && cells[index + w].t === 'ocean') segments.push([x, y + CS, x + CS, y + CS]);
+    if (x > 0 && cells[index - 1].t === 'ocean') segments.push([x, y, x, y + CS]);
+    if (x < (w - 1) * CS && cells[index + 1].t === 'ocean') segments.push([x + CS, y, x + CS, y + CS]);
+    for (const [x1, y1, x2, y2] of segments) {
+      ctx.strokeStyle = 'rgba(7, 21, 27, .7)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(234, 222, 175, .7)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
 
 export function renderMap(game, ui) {
+  latestMapState = { game, ui };
   const cv = $('map');
   const { w, h, cells } = game.map;
   const dpr = window.devicePixelRatio || 1;
@@ -148,6 +351,7 @@ export function renderMap(game, ui) {
   cv.height = h * CS * dpr;
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = true;
 
   const targets = ui.attackMode ? new Set(attackableCells(game, game.playerId)) : null;
 
@@ -155,27 +359,32 @@ export function renderMap(game, ui) {
     const cell = cells[i];
     const x = (i % w) * CS;
     const y = Math.floor(i / w) * CS;
-    ctx.fillStyle = TERRAINS[cell.t].color;
-    ctx.fillRect(x, y, CS, CS);
+    const tileVariant = cell.t === 'ocean' ? 1 : visualHash(game.seed, i, 5) % 3 + 1;
+    if (!drawArt(ctx, `art/tiles/${cell.t}${tileVariant}.png`, x, y, CS, CS)
+      && !drawArt(ctx, ART_PATHS.tile(cell.t), x, y, CS, CS)) {
+      ctx.fillStyle = TERRAINS[cell.t].color;
+      ctx.fillRect(x, y, CS, CS);
+    }
+    drawTerrainFeature(ctx, cell.t, i, x, y, game.seed);
 
     const nation = cell.owner ? game.nations[cell.owner] : null;
     if (nation) {
       // 玩家领土用更高饱和的色罩与更粗的国界，确保在地图上一眼可辨
-      ctx.fillStyle = nation.color + (nation.isPlayer ? '8c' : '55');
+      ctx.fillStyle = nation.color + (nation.isPlayer ? '66' : '42');
       ctx.fillRect(x, y, CS, CS);
-      ctx.strokeStyle = nation.color;
-      ctx.lineWidth = nation.isPlayer ? 3 : 2;
-      drawBorders(ctx, i, w, h, cells, x, y, cell.owner);
     } else if (cell.wild >= 4) {
-      // 散落部民：用小点表示人口规模，让「可吸引的人口」在地图上可见
+      // 散落部民以小型聚落簇呈现；控制尺寸，避免旧版大黑点抢过山川层级。
       const dot = mulberry32(i * 7919);
-      ctx.fillStyle = 'rgba(30, 26, 18, 0.55)';
-      const r = Math.min(3.2, 0.8 + cell.wild / 38);
-      const cx = x + CS / 2 + (dot() - 0.5) * 6;
-      const cy = y + CS / 2 + (dot() - 0.5) * 6;
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.fill();
+      const count = Math.min(3, Math.max(1, Math.round(cell.wild / 24)));
+      for (let village = 0; village < count; village++) {
+        const cx = x + CS / 2 + (dot() - .5) * 7;
+        const cy = y + CS / 2 + (dot() - .5) * 7;
+        const r = .75 + Math.min(.75, cell.wild / 90);
+        ctx.fillStyle = 'rgba(38, 31, 21, .78)';
+        ctx.beginPath(); ctx.arc(cx, cy, r + .6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(194, 160, 94, .78)';
+        ctx.beginPath(); ctx.arc(cx, cy - .25, r, 0, Math.PI * 2); ctx.fill();
+      }
     }
 
     if (targets?.has(i)) {
@@ -187,6 +396,23 @@ export function renderMap(game, ui) {
     }
   }
 
+  drawRivers(ctx, game);
+  drawCoastlines(ctx, w, h, cells);
+
+  // 国界最后覆盖河流与地形，确保政治归属始终清楚。
+  for (const nation of Object.values(game.nations)) {
+    for (const index of nation.cells) {
+      const x = (index % w) * CS;
+      const y = Math.floor(index / w) * CS;
+      ctx.strokeStyle = 'rgba(8, 12, 14, .78)';
+      ctx.lineWidth = nation.isPlayer ? 5 : 4;
+      drawBorders(ctx, index, w, h, cells, x, y, nation.id);
+      ctx.strokeStyle = nation.color;
+      ctx.lineWidth = nation.isPlayer ? 2.5 : 1.6;
+      drawBorders(ctx, index, w, h, cells, x, y, nation.id);
+    }
+  }
+
   // 城郭与驻军：每块领土按文明等级画城市，都城另标驻军兵力
   for (const nation of Object.values(game.nations)) {
     if (nation.cells.length === 0) continue;
@@ -194,7 +420,7 @@ export function renderMap(game, ui) {
     const army = armyTierOf(nation);
     for (const idx of nation.cells) {
       drawCity(ctx, (idx % w) * CS, Math.floor(idx / w) * CS, {
-        tier, capital: idx === nation.cells[0], color: nation.color,
+        tier, capital: idx === nation.cells[0], color: nation.color, nationId: nation.id,
       });
     }
     const capIdx = nation.cells[0];
@@ -203,26 +429,18 @@ export function renderMap(game, ui) {
     });
   }
 
-  // 都城标记：玩家的都城画皇冠并配金色光环，列国画星标
+  // 都城标记与国名统一收在政治识别层，避免旗帜、建筑和文字互相遮挡。
   for (const nation of Object.values(game.nations)) {
     if (nation.cells.length === 0) continue;
     const idx = nation.cells[0];
     const x = (idx % w) * CS + CS / 2;
     const y = Math.floor(idx / w) * CS + CS / 2;
-    ctx.font = `${CS * 0.72}px serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    if (nation.isPlayer) {
-      ctx.beginPath();
-      ctx.arc(x, y, CS * 0.62, 0, Math.PI * 2);
-      ctx.strokeStyle = '#ffd97a';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.fillText('👑', x, y + 1);
-    } else {
-      ctx.fillStyle = '#fff';
-      ctx.fillText('✦', x, y + 1);
-    }
+    ctx.beginPath();
+    ctx.arc(x, y, CS * .59, 0, Math.PI * 2);
+    ctx.strokeStyle = nation.isPlayer ? '#ffe091' : 'rgba(236, 231, 210, .52)';
+    ctx.lineWidth = nation.isPlayer ? 2 : 1;
+    ctx.stroke();
+    drawNationLabel(ctx, game, nation, idx);
   }
 
   if (ui.hoverIdx != null) {
@@ -245,9 +463,9 @@ const fmtShort = (n) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `
 
 // 城市绘制：优先用美术包（art/cities/…），缺失时退化为程序化屋舍剪影。
 // 剪影随文明等级长高变密，都城更宏大；国旗角标始终用国家色标识归属。
-function drawCity(ctx, x, y, { tier, capital, color }) {
+function drawCity(ctx, x, y, { tier, capital, color, nationId }) {
   if (drawArt(ctx, ART_PATHS.city(tier, capital), x + 2, y + 2, CS - 4, CS - 4)) {
-    drawPennant(ctx, x, y, color);
+    drawPennant(ctx, x, y, color, capital, nationId);
     return;
   }
   const base = y + CS - 3;
@@ -264,14 +482,71 @@ function drawCity(ctx, x, y, { tier, capital, color }) {
     ctx.fillRect(hx, base - bh - 1, hutW, 1); // 屋脊
     hx += hutW + 1;
   }
-  drawPennant(ctx, x, y, color);
+  drawPennant(ctx, x, y, color, capital, nationId);
 }
 
-function drawPennant(ctx, x, y, color) {
+function drawPennant(ctx, x, y, color, capital, nationId) {
+  const poleX = x + (capital ? 4 : 3);
+  const top = y + (capital ? 1 : 3);
+  const width = capital ? 10 : 5;
+  const height = capital ? 7 : 4;
+  ctx.strokeStyle = 'rgba(29, 25, 20, .92)';
+  ctx.lineWidth = capital ? 1.4 : 1;
+  ctx.beginPath();
+  ctx.moveTo(poleX, top);
+  ctx.lineTo(poleX, top + height + (capital ? 7 : 3));
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(poleX, top);
+  ctx.lineTo(poleX + width, top + 1);
+  ctx.lineTo(poleX + width - 2, top + height);
+  ctx.lineTo(poleX, top + height - 1);
+  ctx.closePath();
   ctx.fillStyle = color;
-  ctx.fillRect(x + 2, y + 2, 4, 3);
-  ctx.fillStyle = 'rgba(20,16,10,0.9)';
-  ctx.fillRect(x + 2, y + 2, 1, 5);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.42)';
+  ctx.lineWidth = .6;
+  ctx.stroke();
+  if (!capital) return;
+  const emblem = visualHash(nationId, 0, 29) % 3;
+  ctx.fillStyle = 'rgba(255, 246, 205, .9)';
+  if (emblem === 0) ctx.fillRect(poleX + 4, top + 2, 2, 3);
+  else if (emblem === 1) {
+    ctx.beginPath();
+    ctx.arc(poleX + 5, top + 3.5, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(poleX + 5, top + 1.5);
+    ctx.lineTo(poleX + 7, top + 3.5);
+    ctx.lineTo(poleX + 5, top + 5.5);
+    ctx.lineTo(poleX + 3, top + 3.5);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawNationLabel(ctx, game, nation, capitalIndex) {
+  const capX = (capitalIndex % game.map.w) * CS + CS / 2;
+  const capY = Math.floor(capitalIndex / game.map.w) * CS + CS / 2;
+  const name = `${nation.isPlayer ? '你 · ' : ''}${nation.name}`;
+  ctx.save();
+  ctx.font = `${nation.isPlayer ? '600' : '500'} 9px "PingFang SC", sans-serif`;
+  const width = Math.ceil(ctx.measureText(name).width) + 13;
+  const placeLeft = capX + width + 22 > game.map.w * CS;
+  const x = placeLeft ? capX - width - 18 : capX + 17;
+  const y = Math.max(3, capY - 15);
+  ctx.fillStyle = 'rgba(7, 11, 13, .82)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, width, 17, 3);
+  ctx.fill();
+  ctx.fillStyle = nation.color;
+  ctx.fillRect(x, y, 3, 17);
+  ctx.fillStyle = nation.isPlayer ? '#ffe4a0' : '#eee9db';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(name, x + 7, y + 8.5);
+  ctx.restore();
 }
 
 // 都城驻军角标：优先美术包（art/units/…），缺失时画盾徽 + 兵力数字
