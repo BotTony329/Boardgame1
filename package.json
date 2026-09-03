@@ -1,0 +1,14 @@
+{
+  "name": "politgrid",
+  "version": "1.0.0",
+  "description": "格子天下 —— 格子星球上的文字政策模拟政治游戏（千问3.7 裁决政策效果）",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>格子天下 · PolitGrid</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">格子天下<span class="sub">PolitGrid</span></div>
+  <div id="nationBadge"></div>
+  <div id="resBar"></div>
+  <button id="btnNewGame" class="ghost">新开局</button>
+</header>
+
+<main>
+  <section id="mapPane">
+    <canvas id="map"></canvas>
+    <div id="mapLegend"></div>
+    <div id="cellInfo">点击格子查看详情</div>
+  </section>
+
+  <aside id="sidePane">
+    <div class="card" id="nationCard"></div>
+
+    <div class="card">
+      <div class="row spread" style="margin:0 0 10px">
+        <h3 style="margin:0">颁布国策</h3>
+        <span>
+          <button id="btnArchive" class="ghost small">政策档案</button>
+          <button id="btnSuggest" class="ghost small">换一策</button>
+        </span>
+      </div>
+      <div id="currentPolicy"></div>
+      <div id="domainChips"></div>
+      <textarea id="policyText" rows="5"
+        placeholder="以文字颁布本回合国策。例如：轻徭薄赋，开仓放粮赈济流民；兴修水利、垦荒屯田；广设医馆学堂；与四邻开互市……"></textarea>
+      <div class="row spread">
+        <span id="aiHint">由千问3.7 扮演天命史官裁决政策效果</span>
+        <button id="btnPolicy">颁布政策</button>
+      </div>
+    </div>
+
+    <div class="card" id="militaryCard"></div>
+  </aside>
+</main>
+
+<section id="logPane">
+  <h3>编年史</h3>
+  <div id="logList"></div>
+</section>
+
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
