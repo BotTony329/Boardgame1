@@ -159,6 +159,14 @@ main { display: grid; grid-template-columns: minmax(620px, 1fr) minmax(350px, 38
 .potency { height: 6px; background: #0b1014; border-radius: 3px; margin-top: 6px; overflow: hidden; }
 .potency i { display: block; height: 100%; background: linear-gradient(90deg, #765c2c, #f1cf7a); }
 
+/* 军团列表 */
+.army-row { display: flex; align-items: center; gap: 8px; padding: 6px 7px; margin-bottom: 5px; border: 1px solid var(--edge); border-radius: 6px; background: var(--panel-deep); }
+.army-row.on { border-color: var(--gold-dark); }
+.army-info { flex: 1; min-width: 0; font-size: 12.5px; }
+.army-info b { color: var(--ink-bright); }
+.army-ops { display: flex; gap: 4px; }
+.army-ops .ghost.small { padding: 2px 6px; font-size: 11px; }
+
 .next-turn {
   width: 100%;
   margin-top: 10px;

@@ -19,6 +19,13 @@ export function adjustRelation(game, a, b, delta) {
   return game.relations[key];
 }
 
+// 关系直接钉值：用于劝降被拒、开战断交这类「一落千丈」的外交事件
+export function setRelation(game, a, b, value) {
+  game.relations = game.relations || {};
+  game.relations[relKey(a, b)] = clampRel(value);
+  return game.relations[relKey(a, b)];
+}
+
 export function relationLabel(v) {
   if (v <= -40) return '敌视';
   if (v <= -12) return '冷淡';

@@ -1,6 +1,7 @@
 import { RULES, TERRAINS } from './constants.js';
 import { mulberry32, pick } from './rng.js';
-import { attackableCells, resolveAttack, conscript as doConscript } from './war.js';
+import { attackableCells, conscript as doConscript } from './war.js';
+import { resetArmyMoves, aiArmiesTurn, armySoldiersTotal, formArmyFor, armiesOf } from './armies.js';
 import { coronationDue, republicDue, crownKingdom, stageLabel } from './nation.js';
 import { civTierOf } from './civ.js';
 import { upsertStatute } from './statutes.js';
@@ -18,10 +19,11 @@ function territoryYield(game, nation) {
   return { food, minerals, energy };
 }
 
-// 生产与口粮：军马也要吃粮。断粮即饥荒——人口骤减、民怨沸腾。
+// 生产与口粮：军马也要吃粮（含野战军团）。断粮即饥荒——人口骤减、民怨沸腾。
 function resolveEconomy(game, nation, logs) {
   const prod = territoryYield(game, nation);
-  const consumption = nation.pop * RULES.foodPerPop + nation.soldiers * RULES.garrisonFoodPerSoldier;
+  const soldiers = nation.soldiers + armySoldiersTotal(game, nation.id);
+  const consumption = nation.pop * RULES.foodPerPop + soldiers * RULES.garrisonFoodPerSoldier;
   nation.food += prod.food - consumption;
   nation.minerals += prod.minerals;
   nation.energy += prod.energy;
@@ -119,18 +121,17 @@ function aiNationTurn(game, nation, rng, logs) {
     }
   }
 
-  // 复仇：与玩家交战的国家会定期反攻边境
-  if (nation.enemies.includes(game.playerId) && nation.soldiers >= 30 && game.turn % 3 === 0 && rng() < 0.7) {
-    const targets = attackableCells(game, nation.id).filter((i) => game.map.cells[i].owner === game.playerId);
-    if (targets.length) {
-      const report = resolveAttack(game, nation, pick(rng, targets), `${game.seed}:ai:${game.turn}`);
-      logs.push({
-        turn: game.turn, kind: 'war', major: true,
-        text: report.captured
-          ? `${nation.name}大军来犯，夺走了我方一处${TERRAINS[game.map.cells[report.cellIdx].t].name}！`
-          : `${nation.name}来犯被我军击退，我方伤亡 ${report.losses}。`,
-      });
-    }
+  // 组建军团：军国主义者先行成军，其余列国称王后跟进（AI 军团由 aiArmiesTurn 指挥）
+  const wantArmy = nation.strategy === 'militarist'
+    ? (nation.pop >= 500 && nation.soldiers >= 120)
+    : (nation.stage !== 'tribe' && nation.pop >= 1200 && nation.soldiers >= 150);
+  const armyCount = armiesOf(game, nation.id).length;
+  if (wantArmy && armyCount < 2) {
+    const size = nation.strategy === 'militarist'
+      ? Math.min(nation.soldiers, 120 + Math.floor(nation.pop * 0.04))
+      : Math.min(nation.soldiers, 150);
+    const r = formArmyFor(game, nation, size, `${game.seed}:${nation.id}:${game.turn}`);
+    if (r.ok && rng() < 0.5) logs.push({ turn: game.turn, kind: 'ai', text: `${nation.name}组建了一支 ${size} 人的军团。` });
   }
 
   // AI 的阶段演进（简化版）：跨过同样的人口门槛后称王/建制，声望水涨船高
@@ -201,6 +202,9 @@ export function resolveTurn(game) {
   // 持续施政：兑现效果、衰减效力、到期入典章
   applyActivePolicies(game, logs);
 
+  // 新回合：全军行军力重置（玩家在上一次结算后已可用本轮行军力行动）
+  resetArmyMoves(game);
+
   for (const nation of Object.values(game.nations)) {
     if (nation.dead) continue;
     resolveEconomy(game, nation, logs);
@@ -214,6 +218,9 @@ export function resolveTurn(game) {
     if (nation.dead || nation.isPlayer) continue;
     aiNationTurn(game, nation, rng, logs);
   }
+
+  // AI 军团行动：行军、攻城、拓疆、筑垒
+  aiArmiesTurn(game, logs, rng);
 
   // 万国事件层：天灾丰年 → 列国外交 → 商路结算 → 战争的邦交后果
   rollWorldEvents(game, logs, rng);

@@ -139,7 +139,7 @@ function tryGenerate(worldSeed, w, h) {
     else terrain = 'plain';
 
     if (!TERRAINS[terrain].land) {
-      return { t: terrain, res: { food: 0, minerals: 0, energy: 0 }, wild: 0, wildBase: 0, owner: null };
+      return { t: terrain, res: { food: 0, minerals: 0, energy: 0 }, wild: 0, wildBase: 0, owner: null, fort: 0 };
     }
     const base = TERRAINS[terrain].base;
     const res = {
@@ -149,7 +149,7 @@ function tryGenerate(worldSeed, w, h) {
     };
     // 散落人口：水草丰美处聚落大，山地荒漠人烟稀少——这就是可被政策吸引的“散落大陆的人口”
     const wildBase = Math.max(4, Math.round((8 + res.food * 7 + res.energy * 2.5) * wildNoise[i]));
-    return { t: terrain, res, wild: wildBase, wildBase, owner: null };
+    return { t: terrain, res, wild: wildBase, wildBase, owner: null, fort: 0 };
   });
 
   return { w, h, cells, landRatio: cells.filter((c) => TERRAINS[c.t].land).length / cells.length };

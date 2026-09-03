@@ -1,12 +1,13 @@
 import { TERRAINS, RULES } from './engine/constants.js';
 import { stageLabel, canConscript } from './engine/nation.js';
-import { attackableCells, maxConscript } from './engine/war.js';
+import { maxConscript, neighbors } from './engine/war.js';
 import { mulberry32 } from './engine/rng.js';
 import { civTierOf, armyTierOf, nextCivGap } from './engine/civ.js';
 import { drawArt, ART_PATHS } from './engine/art.js';
 import { getRelation, relationLabel, atWar, routeYield } from './engine/world.js';
 import { DIPLO_COSTS, canAfford, playerNation } from './engine/game.js';
 import { MAX_ACTIVE_POLICIES, policyEffectsText } from './engine/policies.js';
+import { classifyArmyTarget, cellDefense, armyAt, armiesOf, armySoldiersTotal } from './engine/armies.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -90,7 +91,7 @@ function renderHeader(game) {
   $('resBar').innerHTML = `
     <span class="turn-stat"><span>纪年</span><b>${game.turn}</b></span>
     ${stat('pop', '人口', fmt(n.pop))}
-    ${stat('army', '军队', fmt(n.soldiers))}
+    ${stat('army', '军队', fmt(n.soldiers + armySoldiersTotal(game, n.id)))}
     ${stat('food', '粮食', fmt(n.food))}
     ${stat('minerals', '矿产', fmt(n.minerals))}
     ${stat('energy', '能源', fmt(n.energy))}
@@ -129,19 +130,40 @@ function renderNationCard(game) {
 function renderMilitaryCard(game, ui) {
   const n = game.nations[game.playerId];
   const cap = maxConscript(n);
-  const power = Math.round(n.soldiers * (n.stability / 60 + 0.4));
+  const armies = armiesOf(game, n.id);
   const enemies = Object.values(game.nations).filter((o) => !o.isPlayer && n.enemies.includes(o.id));
 
   const lockHint = canConscript(n)
     ? `<span class="hint">每征一兵耗粮 2、矿产 0.5，并抽走 1 人口</span>`
     : `<span class="hint warn">🔒 人口达到 ${RULES.conscriptMinPop} 方可征兵（当前 ${fmt(n.pop)}）</span>`;
 
-  const attackHint = n.soldiers > 0
-    ? `<span class="hint">攻击力约 ${power}${n.energy < n.soldiers * 0.2 ? '（能源不足，战力打折）' : ''}。开启征伐模式后点击相邻敌格。</span>`
-    : `<span class="hint warn">🔒 先征募军队方可对外征伐</span>`;
+  const armyRows = armies.map((a) => {
+    const cell = game.map.cells[a.cell];
+    const pos = `(${a.cell % game.map.w}, ${Math.floor(a.cell / game.map.w)})`;
+    const fort = cell.fort ? ` · 工事${cell.fort}级` : '';
+    const acted = a.moveLeft <= 0 ? ' · 已行动' : '';
+    const stance = a.stance === 'defend' ? ' · 坚守' : '';
+    const on = ui.selectedArmyId === a.id;
+    return `<div class="army-row ${on ? 'on' : ''}">
+      <button class="ghost small" data-army-sel="${a.id}">${on ? '★指挥中' : '指挥'}</button>
+      <div class="army-info">
+        <b>⚔ ${fmt(a.soldiers)}</b> <span class="hint">${pos}${fort}${stance}${acted}</span>
+      </div>
+      <div class="army-ops">
+        <button class="ghost small" data-army-fort="${a.id}" ${a.moveLeft <= 0 || (cell.fort || 0) >= 2 || cell.owner !== n.id ? 'disabled' : ''}>工事</button>
+        <button class="ghost small" data-army-defend="${a.id}">${a.stance === 'defend' ? '解除坚守' : '坚守'}</button>
+        <button class="ghost small" data-army-colonize="${a.id}" ${a.moveLeft <= 0 ? 'disabled' : ''}>拓疆</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const armySection = armies.length === 0
+    ? '<div class="hint" style="margin-top:8px">尚无军团。征募后备兵员后组建军团，即可在图上行军、攻伐、筑垒、拓疆。</div>'
+    : `<div class="ap-head">军团（${armies.length}）</div>${armyRows}`;
 
   $('militaryCard').innerHTML = `
     <h3>兵事</h3>
+    <div class="kv"><span class="k">后备兵员</span><b>${fmt(n.soldiers)}</b><span class="hint">野战军 ${fmt(armySoldiersTotal(game, n.id))}</span></div>
     <div class="row">
       <input type="number" id="conscriptCount" min="1" max="${cap}" value="${Math.max(1, Math.min(cap, 50))}" ${cap === 0 ? 'disabled' : ''}>
       <button id="btnConscript" class="small" ${cap === 0 ? 'disabled' : ''}>征募</button>
@@ -149,9 +171,11 @@ function renderMilitaryCard(game, ui) {
     </div>
     ${lockHint}
     <div class="row">
-      <button id="btnAttackMode" class="small ${ui.attackMode ? 'danger' : 'ghost'}">${ui.attackMode ? '退出征伐模式' : '开启征伐模式'}</button>
+      <input type="number" id="armySize" min="50" value="${Math.max(50, Math.min(n.soldiers, 200))}" ${n.soldiers < 50 ? 'disabled' : ''}>
+      <button id="btnFormArmy" class="small" ${n.soldiers < 50 ? 'disabled' : ''}>组建军团</button>
     </div>
-    ${attackHint}
+    <div class="hint">选中军团后：点击相邻己方格调防、无主格拓疆镇压、敌格开战；「拓疆」则以粮安民、和平拓土。</div>
+    ${armySection}
     ${enemies.length ? `<div class="hint warn">交战中：${enemies.map((e) => e.name).join('、')}</div>` : ''}`;
 }
 
@@ -220,6 +244,7 @@ function relationsViewHtml(game) {
       <div class="rel-actions">
         <button class="ghost small" data-diplo="envoy" data-nation="${o.id}" ${war || !affordable ? 'disabled' : ''}>遣使<em>${DIPLO_COSTS.envoy.energy}能</em></button>
         <button class="ghost small" data-diplo="trade" data-nation="${o.id}" ${war || !affordableTrade ? 'disabled' : ''}>通商<em>${DIPLO_COSTS.trade.minerals}矿</em></button>
+        <button class="ghost small" data-diplo="demand" data-nation="${o.id}" ${war ? 'disabled' : ''}>劝降<em>力2倍·好40</em></button>
         <button class="ghost small" data-diplo="sever" data-nation="${o.id}">断交</button>
       </div>
     </div>`;
@@ -469,7 +494,17 @@ export function renderMap(game, ui) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.imageSmoothingEnabled = true;
 
-  const targets = ui.attackMode ? new Set(attackableCells(game, game.playerId)) : null;
+  // 选中军团时：相邻格按行动意图着色（绿=调防，红=开战/拓疆镇压）
+  const selected = ui.selectedArmyId
+    ? (game.armies || []).find((a) => a.id === ui.selectedArmyId)
+    : null;
+  let armyTargets = null;
+  if (selected) {
+    armyTargets = new Map();
+    for (const nb of neighbors(game, selected.cell)) {
+      armyTargets.set(nb, classifyArmyTarget(game, selected, nb));
+    }
+  }
 
   for (let i = 0; i < cells.length; i++) {
     const cell = cells[i];
@@ -503,12 +538,21 @@ export function renderMap(game, ui) {
       }
     }
 
-    if (targets?.has(i)) {
-      ctx.strokeStyle = '#e0564a';
-      ctx.setLineDash([4, 3]);
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x + 2, y + 2, CS - 4, CS - 4);
-      ctx.setLineDash([]);
+    if (armyTargets?.has(i)) {
+      const kind = armyTargets.get(i);
+      if (kind === 'move') {
+        ctx.strokeStyle = 'rgba(143, 214, 143, .9)';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x + 2, y + 2, CS - 4, CS - 4);
+        ctx.setLineDash([]);
+      } else if (kind === 'attack') {
+        ctx.strokeStyle = 'rgba(224, 86, 74, .95)';
+        ctx.setLineDash([4, 3]);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x + 2, y + 2, CS - 4, CS - 4);
+        ctx.setLineDash([]);
+      }
     }
   }
 
@@ -542,6 +586,16 @@ export function renderMap(game, ui) {
     const capIdx = nation.cells[0];
     drawGarrison(ctx, (capIdx % w) * CS, Math.floor(capIdx / w) * CS, {
       army: army.level, soldiers: nation.soldiers, color: nation.color,
+    });
+  }
+
+  // 野战军团：兵符 + 兵力 + 国色环；选中的军团罩金色光环
+  for (const army of game.armies || []) {
+    const nation = game.nations[army.owner];
+    if (!nation) continue;
+    drawArmyToken(ctx, (army.cell % w) * CS, Math.floor(army.cell / w) * CS, {
+      army, color: nation.color, tier: armyTierOf(nation).level,
+      selected: ui.selectedArmyId === army.id,
     });
   }
 
@@ -663,6 +717,44 @@ function drawNationLabel(ctx, game, nation, capitalIndex) {
   ctx.textBaseline = 'middle';
   ctx.fillText(name, x + 7, y + 8.5);
   ctx.restore();
+}
+
+// 野战军团兵符：优先美术包（art/units/…），缺失时画盾徽；外环国色，选中金环
+function drawArmyToken(ctx, x, y, { army, color, tier, selected }) {
+  const size = 15;
+  const tx = x + (CS - size) / 2;
+  const ty = y + (CS - size) / 2;
+  if (selected) {
+    ctx.beginPath();
+    ctx.arc(x + CS / 2, y + CS / 2, CS * 0.66, 0, Math.PI * 2);
+    ctx.strokeStyle = '#ffd97a';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  if (!drawArt(ctx, ART_PATHS.unit(tier), tx, ty, size, size)) {
+    ctx.fillStyle = '#5d6a78';
+    ctx.fillRect(tx + 3, ty, size - 6, size * 0.55);
+    ctx.beginPath();
+    ctx.moveTo(tx + 3, ty + size * 0.55);
+    ctx.lineTo(tx + size - 3, ty + size * 0.55);
+    ctx.lineTo(tx + size / 2, ty + size);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(x + CS / 2, y + CS / 2, CS * 0.52, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
+  ctx.font = 'bold 8px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+  const label = fmtShort(army.soldiers);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(10, 12, 15, .85)';
+  ctx.strokeText(label, x + CS - 1, y + CS - 1.5);
+  ctx.fillStyle = '#ffe4a0';
+  ctx.fillText(label, x + CS - 1, y + CS - 1.5);
 }
 
 // 都城驻军角标：优先美术包（art/units/…），缺失时画盾徽 + 兵力数字

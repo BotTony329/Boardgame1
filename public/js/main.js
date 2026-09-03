@@ -1,9 +1,10 @@
 import {
-  newGame, loadGame, clearSave, doConscript, doAttack, enactPolicy, cancelPolicy,
+  newGame, loadGame, clearSave, doConscript, enactPolicy, cancelPolicy,
   resolveNextTurn, chooseRepublicType, playerNation, doSendEnvoy, doEstablishTrade, doSeverTies,
+  doFormArmy, doMoveArmy, doArmyAttack, doBuildFort, doToggleDefend, doColonize, demandSubmission,
 } from './engine/game.js';
 import { snapshotForAI } from './engine/nation.js';
-import { attackableCells } from './engine/war.js';
+import { classifyArmyTarget, cellDefense, armyAt } from './engine/armies.js';
 import { requestPolicyVerdict } from './engine/ai-client.js';
 import { draftStatute } from './engine/statutes.js';
 import { MAX_ACTIVE_POLICIES } from './engine/policies.js';
@@ -12,7 +13,7 @@ import { render, showModal, toast, setBusy, updateCellInfo } from './ui.js';
 
 let game = null;
 let busy = false;
-const ui = { selectedIdx: null, hoverIdx: null, attackMode: false, domain: 'politics', currentDraft: null, draftOffset: 0, worldTab: 'chronicle' };
+const ui = { selectedIdx: null, hoverIdx: null, selectedArmyId: null, colonizePending: null, domain: 'politics', currentDraft: null, draftOffset: 0, worldTab: 'chronicle' };
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -119,7 +120,8 @@ function showNewGameModal() {
         const seed = $('inpSeed').value.trim();
         clearSave();
         game = newGame({ nationName, leaderName, seed });
-        ui.attackMode = false;
+        ui.selectedArmyId = null;
+        ui.colonizePending = null;
         ui.selectedIdx = null;
         close();
         renderAll();
@@ -273,7 +275,6 @@ function showRepublicChoice() {
 
 function applyRepublic(close, type) {
   chooseRepublicType(game, type);
-  ui.attackMode = false;
   close();
   renderAll();
   toast(`国体已定：${type === 'presidential' ? '总统制共和国' : '主席国'}`);
@@ -317,47 +318,40 @@ function onConscript() {
   renderAll();
 }
 
-function toggleAttackMode() {
-  const n = playerNation(game);
-  if (n.soldiers <= 0) { toast('先征募军队方可征伐'); return; }
-  ui.attackMode = !ui.attackMode;
-  if (ui.attackMode) toast('征伐模式：点击与本国相邻的目标格');
-  renderAll();
+// ---------- 军团指挥 ----------
+function findPlayerArmy(armyId) {
+  return (game.armies || []).find((a) => a.id === armyId && a.owner === game.playerId);
 }
 
-function attackEstimate(targetIdx) {
-  const n = playerNation(game);
+// 选中军团后点击相邻格：判定军机胜算并请战
+function showArmyAttackConfirm(army, targetIdx) {
   const cell = game.map.cells[targetIdx];
-  const supplied = n.energy >= n.soldiers * 0.2;
-  const attPower = n.soldiers * (n.stability / 60 + 0.4) * (supplied ? 1 : 0.8);
-  const terrainDef = TERRAINS[cell.t].defense;
-  const defOwner = cell.owner ? game.nations[cell.owner] : null;
-  const defPower = defOwner
-    ? defOwner.soldiers * terrainDef * (defOwner.stability / 60 + 0.4)
-    : cell.wild * 0.6 * terrainDef + 5;
-  return { attPower: Math.round(attPower), defPower: Math.round(defPower), defOwner, cell, supplied };
-}
+  const nation = playerNation(game);
+  const supplied = nation.energy >= army.soldiers * 0.2;
+  const attPower = Math.round(army.soldiers * (nation.stability / 60 + 0.4) * (supplied ? 1 : 0.8));
+  const def = cellDefense(game, targetIdx);
+  const defPower = Math.round(def.strength);
+  const odds = attPower > defPower * 1.1 ? '胜算较大' : attPower > defPower * 0.8 ? '胜负难料' : '胜算渺茫';
+  const defenderName = def.kind === 'army' ? game.nations[def.army.owner].name
+    : def.kind === 'militia' ? `${def.nation.name}（城邑民兵）` : '散落部民';
 
-function showAttackConfirm(targetIdx) {
-  const est = attackEstimate(targetIdx);
-  const odds = est.attPower > est.defPower * 1.1 ? '胜算较大' : est.attPower > est.defPower * 0.8 ? '胜负难料' : '胜算渺茫';
   showModal({
     title: '兵临城下',
     html: `
-      <p>目标：${TERRAINS[est.cell.t].name}（地形防御 ×${terrainDefLabel(est.cell.t)}）</p>
+      <p>目标：${TERRAINS[cell.t].name}（地形防御 ×${terrainDefLabel(cell.t)}${cell.fort ? ` · 工事${cell.fort}级` : ''}）</p>
       <div class="deltas">
-        <div class="kv"><span class="k">我军攻击力</span><span>${est.attPower}${est.supplied ? '' : '（能源不足）'}</span></div>
-        <div class="kv"><span class="k">守方兵力</span><span>${est.defPower}${est.defOwner ? `（${est.defOwner.name}）` : '（散落部民）'}</span></div>
+        <div class="kv"><span class="k">我军攻击力</span><span>${attPower}${supplied ? '' : '（能源不足）'}</span></div>
+        <div class="kv"><span class="k">守方兵力</span><span>${defPower}（${defenderName}）</span></div>
       </div>
-      <p class="hint">军机研判：${odds}。战事必有伤亡，攻占后民心略损。</p>`,
+      <p class="hint">军机研判：${odds}。战事必有伤亡；攻占后军团进驻该地，民心略损。</p>`,
     actions: [
       { label: '暂缓', ghost: true, onClick: (close) => close() },
       { label: '开战', danger: true, onClick: (close) => {
         close();
-        const report = doAttack(game, targetIdx);
-        ui.attackMode = false;
+        const report = doArmyAttack(game, army.id, targetIdx);
+        if (!report.ok) { toast(report.reason); return; }
         renderAll();
-        if (report) showBattleReport(report);
+        showArmyBattleReport(report);
       } },
     ],
   });
@@ -367,11 +361,11 @@ function terrainDefLabel(t) {
   return { beach: '1.0', plain: '1.0', forest: '1.25', hills: '1.4', mountain: '1.8', desert: '1.1' }[t] || '1.0';
 }
 
-function showBattleReport(report) {
+function showArmyBattleReport(report) {
   showModal({
     title: report.captured ? '捷报' : '败讯',
     html: report.captured
-      ? `<p>${report.attackerName}攻克目标！我军折损 ${report.losses} 人，${report.defenderName !== '散落部民' ? `${report.defenderName}守军溃散（折损 ${report.defenderLosses}），` : ''}收编归化之民 ${report.absorbed} 人。</p>`
+      ? `<p>我军攻克目标！折损 ${report.losses} 人，${report.defenderName !== '散落部民' ? `${report.defenderName}守军溃散（折损 ${report.defenderLosses}），` : ''}${report.absorbed ? `收编归化之民 ${report.absorbed} 人，` : ''}军团进驻新土。</p>`
       : `<p>攻城不利！${report.defenderName}据险死守，我军折损 ${report.losses} 人，军心民气俱损。宜厚积再战。</p>`,
   });
   checkEnd();
@@ -406,7 +400,37 @@ function bindEvents() {
       const r = cancelPolicy(game, cancelBtn.dataset.cancel);
       if (r.ok) { toast('已下诏罢行该施政'); renderAll(); updateReformHint(); }
     }
-    if (e.target.id === 'btnAttackMode') toggleAttackMode();
+    if (e.target.id === 'btnFormArmy') {
+      const size = Math.floor(Number($('armySize').value) || 0);
+      const r = doFormArmy(game, size);
+      if (r.ok) { toast(`军团组建：${size} 人成军`); renderAll(); }
+      else toast(r.reason);
+    }
+    const selBtn = e.target.closest('[data-army-sel]');
+    if (selBtn) {
+      ui.selectedArmyId = ui.selectedArmyId === selBtn.dataset.armySel ? null : selBtn.dataset.armySel;
+      ui.colonizePending = null;
+      toast(ui.selectedArmyId ? '军团听命：点击相邻格行动（绿=调防，红=开战/镇压）' : '已解除指挥');
+      renderAll();
+    }
+    const fortBtn = e.target.closest('[data-army-fort]');
+    if (fortBtn && !fortBtn.disabled) {
+      const r = doBuildFort(game, fortBtn.dataset.armyFort);
+      toast(r.ok ? `工事修筑至 ${r.level} 级（耗矿 ${r.cost}）` : r.reason);
+      renderAll();
+    }
+    const defendBtn = e.target.closest('[data-army-defend]');
+    if (defendBtn) {
+      const r = doToggleDefend(game, defendBtn.dataset.armyDefend);
+      toast(r.ok ? (r.stance === 'defend' ? '全军坚守：防御 +35%，不再主动出击' : '已解除坚守') : r.reason);
+      renderAll();
+    }
+    const colonizeBtn = e.target.closest('[data-army-colonize]');
+    if (colonizeBtn && !colonizeBtn.disabled) {
+      ui.colonizePending = colonizeBtn.dataset.armyColonize;
+      ui.selectedArmyId = ui.colonizePending;
+      toast('拓疆待命：点击相邻无主之地，安抚部民、开疆拓土');
+    }
     if (e.target.id === 'btnSuggest') cycleDraft();
     if (e.target.id === 'btnArchive') showPolicyArchive();
     if (e.target.id === 'btnNewGame') {
@@ -432,6 +456,19 @@ function bindEvents() {
     const btn = e.target.closest('[data-diplo]');
     if (!btn || btn.disabled) return;
     const { diplo, nation } = btn.dataset;
+    if (diplo === 'demand') {
+      const result = demandSubmission(game, nation);
+      renderAll();
+      if (!result.ok) { toast(result.reason); return; }
+      showModal({
+        title: result.surrendered ? '传檄而定' : '劝降被拒',
+        html: result.surrendered
+          ? `<p>${result.targetName}见我邦兵强邦睦，举国归顺——疆土、黎民、府库并入版图，不战而定一邦。</p><p class="hint">所谓上兵伐谋，其次邦交。以势压人者众叛，以德服人者来归。</p>`
+          : `<p>${result.targetName}掷还国书，斥我为僭越：「吾国虽小，亦不跪！」两国就此断交开战。</p>`,
+        actions: [{ label: result.surrendered ? '天下震动' : '整军备战', onClick: (close) => { close(); checkEnd(); } }],
+      });
+      return;
+    }
     const result = diplo === 'envoy' ? doSendEnvoy(game, nation)
       : diplo === 'trade' ? doEstablishTrade(game, nation)
         : doSeverTies(game, nation);
@@ -453,7 +490,7 @@ function bindEvents() {
     if (idx === ui.hoverIdx) return;
     ui.hoverIdx = idx;
     updateCellInfo(game, idx);
-    if (ui.attackMode) renderAll();
+    if (ui.selectedArmyId) renderAll();
   });
   cv.addEventListener('mouseleave', () => {
     ui.hoverIdx = null;
@@ -463,11 +500,47 @@ function bindEvents() {
     const idx = cellFromEvent(e);
     if (idx == null) return;
     ui.selectedIdx = idx;
-    if (ui.attackMode && attackableCells(game, game.playerId).includes(idx)) {
-      showAttackConfirm(idx);
-    } else {
-      updateCellInfo(game, idx);
+
+    // 拓疆待命：点相邻无主之地完成和平殖民
+    if (ui.colonizePending) {
+      const r = doColonize(game, ui.colonizePending, idx);
+      ui.colonizePending = null;
+      toast(r.ok ? `拓疆成功：安置部民 ${r.settlers} 人` : r.reason);
+      renderAll();
+      checkEnd();
+      return;
     }
+
+    // 军团指挥：选中军团后点击相邻格执行上下文行动
+    const army = (game.armies || []).find((a) => a.id === ui.selectedArmyId);
+    if (army && idx !== army.cell) {
+      const kind = classifyArmyTarget(game, army, idx);
+      if (kind === 'move') {
+        const r = doMoveArmy(game, army.id, idx);
+        if (!r.ok) toast(r.reason);
+      } else if (kind === 'attack') {
+        showArmyAttackConfirm(army, idx);
+        return;
+      } else if (kind === 'ocean') {
+        toast('铁蹄不能渡海');
+      } else if (kind === 'exhausted') {
+        toast('该军团本回合已行动，待下回合再战');
+      } else {
+        toast('目标不在行军范围');
+      }
+      renderAll();
+      return;
+    }
+
+    // 点击己方军团所在格：接管指挥
+    const ownArmy = armyAt(game, idx);
+    if (ownArmy && ownArmy.owner === game.playerId) {
+      ui.selectedArmyId = ownArmy.id;
+      toast('军团听命：点击相邻格行动（绿=调防，红=开战/镇压）');
+    } else if (ui.selectedArmyId) {
+      ui.selectedArmyId = null;
+    }
+    updateCellInfo(game, idx);
     renderAll();
   });
 }
