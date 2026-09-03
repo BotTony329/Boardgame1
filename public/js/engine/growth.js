@@ -4,6 +4,7 @@ import { attackableCells, resolveAttack, conscript as doConscript } from './war.
 import { coronationDue, republicDue, crownKingdom, stageLabel } from './nation.js';
 import { civTierOf } from './civ.js';
 import { upsertStatute } from './statutes.js';
+import { rollWorldEvents, aiDiplomacy, resolveTrade, sweepHostilities } from './world.js';
 
 const clamp01to100 = (v) => Math.max(0, Math.min(100, v));
 
@@ -145,7 +146,7 @@ function aiNationTurn(game, nation, rng, logs) {
     if (targets.length) {
       const report = resolveAttack(game, nation, pick(rng, targets), `${game.seed}:ai:${game.turn}`);
       logs.push({
-        turn: game.turn, kind: 'war',
+        turn: game.turn, kind: 'war', major: true,
         text: report.captured
           ? `${nation.name}大军来犯，夺走了我方一处${TERRAINS[game.map.cells[report.cellIdx].t].name}！`
           : `${nation.name}来犯被我军击退，我方伤亡 ${report.losses}。`,
@@ -247,6 +248,12 @@ export function resolveTurn(game, playerEffects = null) {
     if (nation.dead || nation.isPlayer) continue;
     aiNationTurn(game, nation, rng, logs);
   }
+
+  // 万国事件层：天灾丰年 → 列国外交 → 商路结算 → 战争的邦交后果
+  rollWorldEvents(game, logs, rng);
+  aiDiplomacy(game, logs, rng);
+  resolveTrade(game, logs);
+  sweepHostilities(game, logs);
 
   updateCivTiers(game, logs);
   checkMilestones(game, logs, events);

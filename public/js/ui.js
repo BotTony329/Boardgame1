@@ -4,6 +4,8 @@ import { attackableCells, maxConscript } from './engine/war.js';
 import { mulberry32 } from './engine/rng.js';
 import { civTierOf, armyTierOf, nextCivGap } from './engine/civ.js';
 import { drawArt, ART_PATHS } from './engine/art.js';
+import { getRelation, relationLabel, atWar, routeYield } from './engine/world.js';
+import { DIPLO_COSTS, canAfford, playerNation } from './engine/game.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -33,7 +35,7 @@ export function render(game, ui) {
   renderNationCard(game);
   renderCurrentPolicy(game, ui);
   renderMilitaryCard(game, ui);
-  renderLog(game);
+  renderWorld(game, ui);
   renderLegend(game);
   renderMap(game, ui);
   updateCellInfo(game, ui.selectedIdx ?? ui.hoverIdx);
@@ -133,18 +135,109 @@ function renderMilitaryCard(game, ui) {
 const KIND_LABEL = {
   policy: '策', war: '战', famine: '灾', migration: '迁',
   milestone: '典', ai: '闻', military: '军', economy: '政',
+  disaster: '灾', harvest: '瑞', diplo: '盟', trade: '商',
 };
 
-export function renderLog(game) {
-  const list = $('logList');
+function logItemHtml(e) {
+  // 国策条目要把玩家写的原文亮出来，否则回看时只剩史官转述
+  const brief = e.kind === 'policy' && e.brief ? `<b>「${String(e.brief).slice(0, 100)}${e.brief.length > 100 ? '…' : ''}」</b>` : '';
+  const tag = e.statute === 'continue' ? '<span class="tag continue">守成</span>'
+    : e.statute === 'reform' ? '<span class="tag reform">变法</span>' : '';
+  const star = e.major ? '<span class="major-star">◆</span>' : '';
+  return `<div class="log-item kind-${e.kind}"><span class="t">${e.turn}年·${KIND_LABEL[e.kind] || '记'}</span>${star}${tag}${brief}${e.text}</div>`;
+}
+
+// 万国志：编年史 / 大事记 / 列国关系 / 贸易往来，四视图共用一个面板
+export function renderWorld(game, ui) {
+  const body = $('worldBody');
+  document.querySelectorAll('#worldTabs .tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === ui.worldTab));
+  if (ui.worldTab === 'events') {
+    const majors = game.log.filter((e) => e.major).reverse();
+    body.innerHTML = majors.length
+      ? majors.map(logItemHtml).join('')
+      : '<div class="empty-hint">天下尚无大事。天灾、邦交、战争等大事件会记录于此。</div>';
+    return;
+  }
+  if (ui.worldTab === 'relations') {
+    body.innerHTML = relationsViewHtml(game);
+    return;
+  }
+  if (ui.worldTab === 'trade') {
+    body.innerHTML = tradeViewHtml(game);
+    return;
+  }
   const entries = [...game.log].reverse().slice(0, 80);
-  list.innerHTML = entries.map((e) => {
-    // 国策条目要把玩家写的原文亮出来，否则回看时只剩史官转述
-    const brief = e.kind === 'policy' && e.brief ? `<b>「${String(e.brief).slice(0, 100)}${e.brief.length > 100 ? '…' : ''}」</b>` : '';
-    const tag = e.statute === 'continue' ? '<span class="tag continue">守成</span>'
-      : e.statute === 'reform' ? '<span class="tag reform">变法</span>' : '';
-    return `<div class="log-item kind-${e.kind}"><span class="t">${e.turn}年·${KIND_LABEL[e.kind] || '记'}</span>${tag}${brief}${e.text}</div>`;
+  body.innerHTML = `<div id="logList">${entries.map(logItemHtml).join('')}</div>`;
+}
+
+function meterHtml(v) {
+  const pct = Math.round(((v + 100) / 200) * 100);
+  const band = v <= -40 ? 'hostile' : v < 15 ? 'cool' : v < 50 ? 'warm' : 'ally';
+  return `<div class="meter"><i class="${band}" style="width:${pct}%"></i></div>`;
+}
+
+function relationsViewHtml(game) {
+  const player = playerNation(game);
+  const others = Object.values(game.nations).filter((n) => !n.isPlayer && !n.dead);
+  const rows = others.map((o) => {
+    const rel = getRelation(game, player.id, o.id);
+    const war = atWar(game, player.id, o.id);
+    const affordable = canAfford(player, DIPLO_COSTS.envoy);
+    const affordableTrade = canAfford(player, DIPLO_COSTS.trade) && rel >= 15;
+    return `<div class="rel-row">
+      <i class="rel-dot" style="background:${o.color}"></i>
+      <div class="rel-main">
+        <div class="rel-name">${o.name}
+          ${war ? '<span class="rel-state war">交战中</span>' : `<span class="rel-state">${relationLabel(rel)}</span>`}
+          ${routeBetweenFlag(game, player.id, o.id)}
+        </div>
+        ${meterHtml(rel)}
+      </div>
+      <span class="rel-val">${rel > 0 ? '+' : ''}${rel}</span>
+      <div class="rel-actions">
+        <button class="ghost small" data-diplo="envoy" data-nation="${o.id}" ${war || !affordable ? 'disabled' : ''}>遣使<em>${DIPLO_COSTS.envoy.energy}能</em></button>
+        <button class="ghost small" data-diplo="trade" data-nation="${o.id}" ${war || !affordableTrade ? 'disabled' : ''}>通商<em>${DIPLO_COSTS.trade.minerals}矿</em></button>
+        <button class="ghost small" data-diplo="sever" data-nation="${o.id}">断交</button>
+      </div>
+    </div>`;
   }).join('');
+
+  // 其余列国之间的关系速览
+  const aiPairs = [];
+  for (let i = 0; i < others.length; i++) {
+    for (let j = i + 1; j < others.length; j++) {
+      const rel = getRelation(game, others[i].id, others[j].id);
+      aiPairs.push(`<div class="rel-pair">${others[i].name} × ${others[j].name}
+        ${atWar(game, others[i].id, others[j].id) ? '<span class="rel-state war">交战</span>' : `<span class="rel-state">${relationLabel(rel)}</span>`}
+        <em>${rel > 0 ? '+' : ''}${rel}</em></div>`);
+    }
+  }
+  return `${rows}<div class="rel-subhead">列国之间</div>${aiPairs.join('')}`;
+}
+
+function routeBetweenFlag(game, a, b) {
+  const route = (game.tradeRoutes || []).find((r) => (r.a === a && r.b === b) || (r.a === b && r.b === a));
+  return route ? '<span class="rel-state trade">通商</span>' : '';
+}
+
+function tradeViewHtml(game) {
+  const routes = game.tradeRoutes || [];
+  if (routes.length === 0) {
+    return '<div class="empty-hint">天下尚无商路。与关系「友善」以上的国家「通商」即可开辟；每回合双向互通粮矿能源。</div>';
+  }
+  const rows = routes.map((r) => {
+    const a = game.nations[r.a], b = game.nations[r.b];
+    if (!a || !b) return '';
+    const y = routeYield(game, r);
+    return `<div class="trade-row">
+      <div class="trade-head"><i class="rel-dot" style="background:${a.color}"></i><b>${a.name}</b>
+        <span class="trade-arrow">⇄</span>
+        <i class="rel-dot" style="background:${b.color}"></i><b>${b.name}</b>
+        <span class="hint">自第 ${r.since} 年</span></div>
+      <div class="trade-flows hint">每回合双向：粮 <b class="good">+${y.food}</b> · 矿 <b class="good">+${y.minerals}</b> · 能 <b class="good">+${y.energy}</b></div>
+    </div>`;
+  }).join('');
+  return `<div class="hint" style="margin-bottom:8px">商路因战争或邦交跌破中立而断绝。</div>${rows}`;
 }
 
 // 图例：一眼认出哪个国家是你的

@@ -15,17 +15,32 @@
 </header>
 
 <main>
-  <section id="mapPane">
-    <div class="panel-heading map-heading">
-      <div><span class="eyebrow">WORLD ATLAS</span><h2>天下舆图</h2></div>
-      <span class="panel-note">疆域、聚落与山川资源</span>
-    </div>
-    <div class="map-frame"><canvas id="map"></canvas></div>
-    <div class="map-footer">
-      <div id="mapLegend"></div>
-      <div id="cellInfo">点击格子查看详情</div>
-    </div>
-  </section>
+  <div id="leftCol">
+    <section id="mapPane">
+      <div class="panel-heading map-heading">
+        <div><span class="eyebrow">WORLD ATLAS</span><h2>天下舆图</h2></div>
+        <span class="panel-note">疆域、聚落与山川资源</span>
+      </div>
+      <div class="map-frame"><canvas id="map"></canvas></div>
+      <div class="map-footer">
+        <div id="mapLegend"></div>
+        <div id="cellInfo">点击格子查看详情</div>
+      </div>
+    </section>
+
+    <section id="worldPane" class="card">
+      <div class="panel-heading world-heading">
+        <div><span class="eyebrow">WORLD LEDGER</span><h2>万国志</h2></div>
+        <nav id="worldTabs">
+          <button class="tab on" data-tab="chronicle">编年史</button>
+          <button class="tab" data-tab="events">大事记</button>
+          <button class="tab" data-tab="relations">列国关系</button>
+          <button class="tab" data-tab="trade">贸易往来</button>
+        </nav>
+      </div>
+      <div id="worldBody"><div id="logList"></div></div>
+    </section>
+  </div>
 
   <aside id="sidePane">
     <div class="card" id="nationCard"></div>
@@ -52,14 +67,6 @@
     <div class="card" id="militaryCard"></div>
   </aside>
 </main>
-
-<section id="logPane">
-  <div class="panel-heading">
-    <div><span class="eyebrow">CHRONICLE</span><h2>编年史</h2></div>
-    <span class="panel-note">新事在上，旧事在下</span>
-  </div>
-  <div id="logList"></div>
-</section>
 
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>

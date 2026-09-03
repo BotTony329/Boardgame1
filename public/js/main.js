@@ -1,6 +1,6 @@
 import {
   newGame, loadGame, clearSave, applyResolvedTurn, doConscript, doAttack,
-  chooseRepublicType, playerNation,
+  chooseRepublicType, playerNation, doSendEnvoy, doEstablishTrade, doSeverTies,
 } from './engine/game.js';
 import { snapshotForAI } from './engine/nation.js';
 import { attackableCells } from './engine/war.js';
@@ -11,7 +11,7 @@ import { render, showModal, toast, setBusy, updateCellInfo } from './ui.js';
 
 let game = null;
 let busy = false;
-const ui = { selectedIdx: null, hoverIdx: null, attackMode: false, domain: 'politics', currentDraft: null, draftOffset: 0 };
+const ui = { selectedIdx: null, hoverIdx: null, attackMode: false, domain: 'politics', currentDraft: null, draftOffset: 0, worldTab: 'chronicle' };
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -396,6 +396,32 @@ function bindEvents() {
         ],
       });
     }
+  });
+
+  // 万国志：标签切换 + 外交动作（按钮由 renderWorld 动态生成，走事件委托）
+  $('worldTabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.tab');
+    if (!tab) return;
+    ui.worldTab = tab.dataset.tab;
+    renderAll();
+  });
+  $('worldPane').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-diplo]');
+    if (!btn || btn.disabled) return;
+    const { diplo, nation } = btn.dataset;
+    const result = diplo === 'envoy' ? doSendEnvoy(game, nation)
+      : diplo === 'trade' ? doEstablishTrade(game, nation)
+        : doSeverTies(game, nation);
+    if (!result.ok) {
+      toast(result.reason);
+    } else if (diplo === 'envoy') {
+      toast(`使节已返：关系 ${result.relation > 0 ? '+' : ''}${result.relation}`);
+    } else if (diplo === 'trade') {
+      toast('商约缔结，边市大开');
+    } else {
+      toast('已断绝往来');
+    }
+    renderAll();
   });
 
   const cv = $('map');

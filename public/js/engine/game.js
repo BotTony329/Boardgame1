@@ -5,6 +5,7 @@ import { conscript, attackableCells, resolveAttack } from './war.js';
 import { hashSeed, mulberry32, pick } from './rng.js';
 import { RULES, TERRAINS } from './constants.js';
 import { pickStatutes } from './statutes.js';
+import { getRelation, adjustRelation, establishRoute, breakRoute, routeBetween, routeYield } from './world.js';
 
 export const SAVE_KEY = 'politgrid_save_v1';
 
@@ -64,6 +65,8 @@ export function newGame({ nationName, leaderName, seed }) {
     pendingRepublic: false,
     playerId: 'p1',
     nations: { p1: player, ai0: aiNations[0], ai1: aiNations[1], ai2: aiNations[2] },
+    relations: {},      // 邦交关系表（engine/world.js），键为 "a|b"（字典序）
+    tradeRoutes: [],    // 现存商路
     log: [{
       turn: 1, kind: 'milestone',
       text: `新纪元元年：${player.leader}率族人在${TERRAINS[world.cells[playerCell].t].name}上点燃第一堆篝火，「${player.name}」于此立邦。天下散落部民无数，皆可被善政所感召。`,
@@ -96,6 +99,8 @@ export function loadGame() {
     if (!Array.isArray(player.statutes) || player.statutes.length === 0) {
       player.statutes = pickStatutes(2);
     }
+    game.relations = game.relations || {};
+    game.tradeRoutes = game.tradeRoutes || [];
     return game;
   } catch {
     return null;
@@ -142,7 +147,7 @@ export function doAttack(game, cellIdx) {
   if (!attackableCells(game, nation.id).includes(cellIdx)) return null;
   const report = resolveAttack(game, nation, cellIdx);
   game.log.push({
-    turn: game.turn, kind: 'war',
+    turn: game.turn, kind: 'war', major: true,
     text: report.captured
       ? `${nation.name}攻克一处${TERRAINS[game.map.cells[cellIdx].t].name}，我军折损 ${report.losses} 人${report.defenderName !== '散落部民' ? `，${report.defenderName}守军溃败` : ''}，接纳归化之民 ${report.absorbed}。`
       : `进攻受挫！${report.defenderName}据险死守，我军折损 ${report.losses} 人，军心震动。`,
@@ -158,11 +163,69 @@ export function chooseRepublicType(game, type) {
   establishRepublic(nation, type);
   game.pendingRepublic = false;
   game.log.push({
-    turn: game.turn, kind: 'milestone',
+    turn: game.turn, kind: 'milestone', major: true,
     text: `${nation.name}改制为${stageLabel(nation)}！${nation.leader}与万民共订新约，声望日隆。`,
   });
   saveGame(game);
   return true;
+}
+
+// —— 邦交动作（万国志面板）——
+
+export const DIPLO_COSTS = { envoy: { energy: 20 }, trade: { minerals: 30 } };
+
+export function canAfford(nation, cost) {
+  return (nation.energy >= (cost.energy ?? 0)) && (nation.minerals >= (cost.minerals ?? 0));
+}
+
+// 遣使修好：耗能源，关系 +12
+export function doSendEnvoy(game, targetId) {
+  const nation = playerNation(game);
+  if (!canAfford(nation, DIPLO_COSTS.envoy)) return { ok: false, reason: '能源不足（需 20）' };
+  const target = game.nations[targetId];
+  if (!target || target.dead || atWarWith(game, nation, targetId)) return { ok: false, reason: '交战之际，使节不通' };
+  nation.energy -= DIPLO_COSTS.envoy.energy;
+  const rel = adjustRelation(game, nation.id, targetId, 12);
+  game.log.push({ turn: game.turn, kind: 'diplo', text: `${nation.name}遣使赴${target.name}修好，两邦关系趋于${rel >= 15 ? '友善' : '缓和'}。` });
+  saveGame(game);
+  return { ok: true, relation: rel };
+}
+
+// 缔结商约：耗矿产，关系 ≥ 15 且非交战方可缔结
+export function doEstablishTrade(game, targetId) {
+  const nation = playerNation(game);
+  if (!canAfford(nation, DIPLO_COSTS.trade)) return { ok: false, reason: '矿产不足（需 30）' };
+  const target = game.nations[targetId];
+  if (!target || target.dead || atWarWith(game, nation, targetId)) return { ok: false, reason: '交战之际，商路不通' };
+  if (getRelation(game, nation.id, targetId) < 15) return { ok: false, reason: '邦交尚浅，对方不肯互市（需友善以上）' };
+  nation.minerals -= DIPLO_COSTS.trade.minerals;
+  establishRoute(game, nation.id, targetId, game.turn);
+  const y = routeYield(game, routeBetween(game, nation.id, targetId));
+  game.log.push({
+    turn: game.turn, kind: 'trade', major: true,
+    text: `${nation.name}与${target.name}缔结商约：每回合双向互通 粮${y.food} 矿${y.minerals} 能${y.energy}。`,
+  });
+  saveGame(game);
+  return { ok: true };
+}
+
+// 断绝往来：关系 −25，商路断绝
+export function doSeverTies(game, targetId) {
+  const nation = playerNation(game);
+  const target = game.nations[targetId];
+  if (!target || target.dead) return { ok: false, reason: '该国已不存在' };
+  adjustRelation(game, nation.id, targetId, -25);
+  const hadRoute = breakRoute(game, nation.id, targetId);
+  game.log.push({
+    turn: game.turn, kind: 'diplo', major: true,
+    text: `${nation.name}与${target.name}断绝往来${hadRoute ? '，商路就此罢市' : ''}。`,
+  });
+  saveGame(game);
+  return { ok: true };
+}
+
+function atWarWith(game, nation, targetId) {
+  return nation.enemies.includes(targetId) || game.nations[targetId]?.enemies.includes(nation.id);
 }
 
 export { attackableCells };
