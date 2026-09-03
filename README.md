@@ -10,7 +10,7 @@
 ## 启动
 
 ```bash
-npm start        # http://localhost:8787
+npm start        # http://localhost:8787（本地/自托管入口）
 ```
 
 需要 Node ≥ 18。API 配置在 `.env`（勿提交/泄露）：
@@ -20,6 +20,17 @@ QWEN_API_KEY=...          # DashScope 兼容模式 Key
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen3.7-flash
 ```
+
+## 部署
+
+- **GitHub**：`git push` 到 `BotTony329/Boardgame1`。
+- **Vercel**：已部署 https://boardgame1-virid.vercel.app
+  - 架构：静态文件（`public/`）+ Serverless Function（`api/ai/policy.js`），
+    Function 与本地服务器共用同一份裁决逻辑（`server/handler.js`）。
+  - 密钥：Vercel 项目环境变量 `QWEN_API_KEY`（production），不在仓库中。
+  - CLI 流程：`vercel link --project boardgame1` → `vercel env add QWEN_API_KEY production` → `vercel --prod`。
+  - 注意：当前 Vercel 项目未连接 Git 仓库，推送后需手动 `vercel --prod`；
+    若要 push 自动部署，在 Vercel 控制台 Project → Settings → Git 连接 `BotTony329/Boardgame1` 即可。
 
 开发快捷方式：`http://localhost:8787/?autostart=1&seed=ocean1` 可跳过开局弹窗直达地图；
 同一种子生成同一颗星球，可分享种子复现世界。
@@ -59,9 +70,11 @@ QWEN_MODEL=qwen3.7-flash
 ## 架构
 
 ```
-server.js               零依赖 Node 服务器：静态托管 + /api/ai/policy 代理（Key 只在服务端）
+server.js               本地/自托管入口：静态托管 + /api/ai/policy
+api/ai/policy.js        Vercel Serverless Function（与本地共用 handler）
 server/
   config.js             .env / 环境变量加载
+  handler.js            政策裁决请求处理（本地与 Vercel 共用）
   ai-proxy.js           提示词构建 → qwen3.7-flash → JSON 提取 → 服务端数值钳制（非法 JSON 自动重试）
   static.js             静态文件 + 防路径穿越 + 请求体限长
 public/

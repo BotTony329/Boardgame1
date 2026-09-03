@@ -1,43 +1,15 @@
 import http from 'node:http';
 import { config } from './server/config.js';
 import { serveStatic, readJsonBody } from './server/static.js';
-import { evaluatePolicy } from './server/ai-proxy.js';
+import { handlePolicyRequest } from './server/handler.js';
 
+// 本地开发/自托管入口。Vercel 部署使用 api/ai/policy.js（同一份处理逻辑）。
 const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && req.url === '/api/ai/policy') {
       const body = await readJsonBody(req);
-      const state = body?.state;
-      const policy = body?.policy;
-      // 只接收裁决必需的字段：客户端状态永不被信任为完整游戏状态
-      if (!state || !policy?.text) {
-        res.writeHead(400, { 'Content-Type': 'application/json' })
-          .end(JSON.stringify({ error: '需要 state 与 policy.text' }));
-        return;
-      }
-      const snapshot = {
-        turn: Number(state.turn) || 1,
-        stage: String(state.stage || '部落'),
-        nationName: String(state.nationName || '无名之邦').slice(0, 30),
-        pop: Number(state.pop) || 0,
-        soldiers: Number(state.soldiers) || 0,
-        stability: Number(state.stability) || 50,
-        appeal: Number(state.appeal) || 10,
-        cellCount: Number(state.cellCount) || 1,
-        food: Number(state.food) || 0,
-        minerals: Number(state.minerals) || 0,
-        energy: Number(state.energy) || 0,
-        recentPolicies: Array.isArray(state.recentPolicies)
-          ? state.recentPolicies.slice(-3).map((p) => String(p).slice(0, 80))
-          : [],
-      };
-      const cleanPolicy = {
-        domain: String(policy.domain || ''),
-        text: String(policy.text).slice(0, 500),
-        continuation: Boolean(policy.continuation),
-      };
-      const result = await evaluatePolicy(config, snapshot, cleanPolicy);
-      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ result }));
+      const { status, payload } = await handlePolicyRequest(body);
+      res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
       return;
     }
 
