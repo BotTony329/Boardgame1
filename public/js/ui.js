@@ -2,6 +2,8 @@ import { TERRAINS, RULES } from './engine/constants.js';
 import { stageLabel, canConscript } from './engine/nation.js';
 import { attackableCells, maxConscript } from './engine/war.js';
 import { mulberry32 } from './engine/rng.js';
+import { civTierOf, armyTierOf, nextCivGap } from './engine/civ.js';
+import { drawArt, ART_PATHS } from './engine/art.js';
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -50,7 +52,15 @@ function renderNationCard(game) {
       <div class="progress"><i style="width:${Math.min(100, n.cells.length / RULES.victoryCells * 100)}%"></i></div>
       <div class="hint">攻占 ${RULES.victoryCells} 格即可终结乱世，一统天下</div>`;
   }
-  $('nationCard').innerHTML = `<h3>国势</h3>${rows}`;
+  const civ = civTierOf(n);
+  const army = armyTierOf(n);
+  const gap = nextCivGap(n);
+  const civRows = `
+    <div class="kv"><span class="k">🏛 文明</span><span>${civ.level} 级 · ${civ.name}</span></div>
+    <div class="hint">${civ.desc} · 兵制「${army.name}」：${army.desc}</div>
+    ${gap ? `<div class="hint">迈向「${gap.tier.name}」还差：${gap.gaps.join('、')}</div>` : '<div class="hint">文明已臻此世之巅。</div>'}
+  `;
+  $('nationCard').innerHTML = `<h3>国势</h3>${rows}${civRows}`;
 }
 
 function renderMilitaryCard(game, ui) {
@@ -174,6 +184,22 @@ export function renderMap(game, ui) {
     }
   }
 
+  // 城郭与驻军：每块领土按文明等级画城市，都城另标驻军兵力
+  for (const nation of Object.values(game.nations)) {
+    if (nation.cells.length === 0) continue;
+    const tier = nation.civTier || civTierOf(nation).level;
+    const army = armyTierOf(nation);
+    for (const idx of nation.cells) {
+      drawCity(ctx, (idx % w) * CS, Math.floor(idx / w) * CS, {
+        tier, capital: idx === nation.cells[0], color: nation.color,
+      });
+    }
+    const capIdx = nation.cells[0];
+    drawGarrison(ctx, (capIdx % w) * CS, Math.floor(capIdx / w) * CS, {
+      army: army.level, soldiers: nation.soldiers, color: nation.color,
+    });
+  }
+
   // 都城标记：玩家的都城画皇冠并配金色光环，列国画星标
   for (const nation of Object.values(game.nations)) {
     if (nation.cells.length === 0) continue;
@@ -210,6 +236,67 @@ export function renderMap(game, ui) {
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 1, y + 1, CS - 2, CS - 2);
   }
+}
+
+const fmtShort = (n) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(Math.round(n / 100) / 10).toFixed(1)}k` : `${Math.round(n)}`);
+
+// 城市绘制：优先用美术包（art/cities/…），缺失时退化为程序化屋舍剪影。
+// 剪影随文明等级长高变密，都城更宏大；国旗角标始终用国家色标识归属。
+function drawCity(ctx, x, y, { tier, capital, color }) {
+  if (drawArt(ctx, ART_PATHS.city(tier, capital), x + 2, y + 2, CS - 4, CS - 4)) {
+    drawPennant(ctx, x, y, color);
+    return;
+  }
+  const base = y + CS - 3;
+  const hutW = 4;
+  const huts = capital ? Math.min(5, tier + 1) : Math.min(3, tier);
+  const totalW = huts * (hutW + 1) - 1;
+  let hx = x + CS / 2 - totalW / 2;
+  for (let i = 0; i < huts; i++) {
+    const isKeep = capital && i === Math.floor(huts / 2);
+    const bh = 3 + tier + (isKeep ? 3 : 0);
+    ctx.fillStyle = isKeep ? '#55432e' : '#3d3227';
+    ctx.fillRect(hx, base - bh, hutW, bh);
+    ctx.fillStyle = isKeep ? '#7a6a4d' : '#63543d';
+    ctx.fillRect(hx, base - bh - 1, hutW, 1); // 屋脊
+    hx += hutW + 1;
+  }
+  drawPennant(ctx, x, y, color);
+}
+
+function drawPennant(ctx, x, y, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x + 2, y + 2, 4, 3);
+  ctx.fillStyle = 'rgba(20,16,10,0.9)';
+  ctx.fillRect(x + 2, y + 2, 1, 5);
+}
+
+// 都城驻军角标：优先美术包（art/units/…），缺失时画盾徽 + 兵力数字
+function drawGarrison(ctx, x, y, { army, soldiers, color }) {
+  if (soldiers <= 0) return;
+  const ux = x + CS - 12, uy = y + 2;
+  if (!drawArt(ctx, ART_PATHS.unit(army), ux, uy, 11, 11)) {
+    ctx.fillStyle = '#6e7b8a';
+    ctx.fillRect(ux + 2, uy, 7, 7);
+    ctx.fillStyle = color;
+    ctx.fillRect(ux + 4, uy + 2, 3, 3);
+    ctx.beginPath();
+    ctx.moveTo(ux + 2, uy + 7);
+    ctx.lineTo(ux + 9, uy + 7);
+    ctx.lineTo(ux + 5.5, uy + 11);
+    ctx.closePath();
+    ctx.fillStyle = '#56626f';
+    ctx.fill();
+  }
+  ctx.font = 'bold 8px sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'alphabetic';
+  const label = fmtShort(soldiers);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(10,12,15,0.85)';
+  ctx.strokeText(label, x + CS - 1, y + CS - 1.5);
+  ctx.fillStyle = '#ffd97a';
+  ctx.fillText(label, x + CS - 1, y + CS - 1.5);
 }
 
 function drawBorders(ctx, i, w, h, cells, x, y, owner) {

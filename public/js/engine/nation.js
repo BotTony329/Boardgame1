@@ -33,6 +33,7 @@ export function createNation({ id, name, leader, color, isPlayer, startCell, str
     appeal: 12,
     strategy: strategy || null,
     enemies: [],
+    civTier: 1, // 文明等级（engine/civ.js），开局即初始化以便记录晋升
   };
 }
 

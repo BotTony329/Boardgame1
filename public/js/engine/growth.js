@@ -2,6 +2,7 @@ import { RULES, TERRAINS } from './constants.js';
 import { mulberry32, pick } from './rng.js';
 import { attackableCells, resolveAttack, conscript as doConscript } from './war.js';
 import { coronationDue, republicDue, crownKingdom, stageLabel } from './nation.js';
+import { civTierOf } from './civ.js';
 
 const clamp01to100 = (v) => Math.max(0, Math.min(100, v));
 
@@ -163,6 +164,25 @@ function aiNationTurn(game, nation, rng, logs) {
   }
 }
 
+// 文明等级结算：达标晋升、失守降级，城市与士兵图像随之换装。
+// 等级变化写入编年史，让"我的政策让文明前进了还是倒退了"变得可见。
+function updateCivTiers(game, logs) {
+  for (const nation of Object.values(game.nations)) {
+    if (nation.dead) continue;
+    const tier = civTierOf(nation);
+    if (nation.civTier == null) {
+      nation.civTier = tier.level;
+      continue;
+    }
+    if (tier.level > nation.civTier && nation.isPlayer) {
+      logs.push({ turn: game.turn, kind: 'milestone', text: `文明演进！${nation.name}步入「${tier.name}」——${tier.desc}，城郭焕然一新。` });
+    } else if (tier.level < nation.civTier && nation.isPlayer) {
+      logs.push({ turn: game.turn, kind: 'famine', text: `民生凋敝：${nation.name}的文明由盛转衰，跌落至「${tier.name}」。` });
+    }
+    nation.civTier = tier.level;
+  }
+}
+
 function checkMilestones(game, logs, events) {
   const player = game.nations[game.playerId];
   if (coronationDue(player)) {
@@ -217,6 +237,7 @@ export function resolveTurn(game, playerEffects = null) {
     aiNationTurn(game, nation, rng, logs);
   }
 
+  updateCivTiers(game, logs);
   checkMilestones(game, logs, events);
   game.turn += 1;
   game.log.push(...logs);
