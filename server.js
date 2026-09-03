@@ -31,7 +31,11 @@ const server = http.createServer(async (req, res) => {
           ? state.recentPolicies.slice(-3).map((p) => String(p).slice(0, 80))
           : [],
       };
-      const cleanPolicy = { domain: String(policy.domain || ''), text: String(policy.text).slice(0, 500) };
+      const cleanPolicy = {
+        domain: String(policy.domain || ''),
+        text: String(policy.text).slice(0, 500),
+        continuation: Boolean(policy.continuation),
+      };
       const result = await evaluatePolicy(config, snapshot, cleanPolicy);
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ result }));
       return;

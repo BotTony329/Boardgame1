@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newGame, playerNation, applyResolvedTurn } from '../public/js/engine/game.js';
 import { heuristicEvaluate } from '../public/js/engine/heuristic.js';
-import { suggestPolicy } from '../public/js/engine/suggestions.js';
+import { draftStatute, pickStatutes, STATUTE_LIBRARY } from '../public/js/engine/statutes.js';
 import { chooseRepublicType, SAVE_KEY } from '../public/js/engine/game.js';
 
 test('newGame 开局：四国各占一格、互不相邻、世界可玩', () => {
@@ -91,15 +91,53 @@ test('政策档案：每道国策连同裁决被完整记录，回合号正确',
   assert.equal(legacy.policies.length, 1);
 });
 
-test('国策建议：新局有建议可改，国情恶化时建议转向救命方向', () => {
-  const game = newGame({ nationName: '建议邦', leaderName: '测', seed: 'sugg-seed' });
-  const s = suggestPolicy(game);
-  assert.ok(typeof s === 'string' && s.length >= 10, '建议应是完整句子');
-  playerNation(game).food = 10;
-  for (let i = 0; i < 10; i++) {
-    const s2 = suggestPolicy(game);
-    assert.ok(/粮|赈|饥|税|互市|渔猎/.test(s2), `断粮时建议应面向救荒，实际：${s2}`);
-  }
+test('典章制度：开局随机继承两道祖制，同种子可复现，逐回合轮转预填', () => {
+  const game = newGame({ nationName: '典章邦', leaderName: '测', seed: 'statute-seed' });
+  const n = playerNation(game);
+  assert.equal(n.statutes.length, 2, '开局应继承两道祖制');
+  assert.notEqual(n.statutes[0].id, n.statutes[1].id, '两道祖制不重复');
+  assert.ok(n.statutes.every((s) => s.text.length >= 10));
+
+  const game2 = newGame({ nationName: '典章邦', leaderName: '测', seed: 'statute-seed' });
+  assert.deepEqual(
+    n.statutes.map((s) => s.id),
+    game2.nations.p1.statutes.map((s) => s.id),
+    '同种子继承相同祖制',
+  );
+
+  const d1 = draftStatute(n, 1);
+  const d2 = draftStatute(n, 2);
+  assert.notEqual(d1.id, d2.id, '逐回合轮转预填不同典章');
+  assert.ok(STATUTE_LIBRARY.length >= 16, '典章库规模足够');
+  assert.equal(pickStatutes(3).length, 3);
+});
+
+test('守成与变法：续行祖制稳定+1，改动稳定−3且新策录入典章', () => {
+  const game = newGame({ nationName: '变法邦', leaderName: '测', seed: 'reform-seed' });
+  const n = playerNation(game);
+  n.food = 99999;
+  const draft = draftStatute(n, game.turn);
+
+  const stab0 = n.stability;
+  applyResolvedTurn(game, {
+    verdict: 'neutral', narrative: '一如常年', brief: draft.text, domain: draft.domain,
+    populationChangePct: 0, stabilityChange: 0, appealChange: 0,
+    resourceChanges: { food: 0, minerals: 0, energy: 0 }, statute: 'continue',
+  });
+  assert.equal(Math.round(n.stability), stab0 + 1, '守成应+1稳定');
+  assert.equal(n.statutes.length, 2, '守成不新增典章');
+
+  const stab1 = n.stability;
+  const newPolicyText = '开凿新渠引水入城，垦荒千亩，减田租至二十分之一';
+  applyResolvedTurn(game, {
+    verdict: 'positive', narrative: '气象一新', brief: newPolicyText, domain: 'economy',
+    populationChangePct: 2, stabilityChange: 0, appealChange: 3,
+    resourceChanges: { food: 0, minerals: 0, energy: 0 }, statute: 'reform',
+  });
+  assert.equal(Math.round(n.stability), stab1 - 3, '变法应−3稳定');
+  assert.equal(n.statutes.length, 3, '新策应录入典章');
+  assert.equal(n.statutes[0].text, newPolicyText, '新典章置于最前');
+  assert.equal(game.policies[1].statute, 'reform', '政策档案应记录变法');
 });
 
 test('存档函数在无 localStorage 环境（Node 测试）下安全降级', () => {

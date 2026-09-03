@@ -12,12 +12,30 @@ const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
 export function render(game, ui) {
   renderHeader(game);
   renderNationCard(game);
-  renderCurrentPolicy(game);
+  renderCurrentPolicy(game, ui);
   renderMilitaryCard(game, ui);
   renderLog(game);
   renderLegend(game);
   renderMap(game, ui);
   updateCellInfo(game, ui.selectedIdx ?? ui.hoverIdx);
+}
+
+const DOMAIN_LABEL = { politics: '政治', economy: '经济', culture: '文化', military: '军事' };
+
+// 现存典章：国家既有的制度。高亮为本回合预填的一道——
+// 原样颁布是守成（稳定+1），改动是变法（稳定−3）。
+export function renderCurrentPolicy(game, ui) {
+  const el = $('currentPolicy');
+  const statutes = game.nations[game.playerId].statutes || [];
+  if (statutes.length === 0) {
+    el.innerHTML = '<div class="current-policy none">国无典章。你颁布的国策将录为制度，传之来年。</div>';
+    return;
+  }
+  const items = statutes.map((s) => `
+    <div class="statute ${ui.currentDraft?.id === s.id ? 'on' : ''}">
+      <span class="st-domain">${DOMAIN_LABEL[s.domain] || ''}</span>${s.text}
+    </div>`).join('');
+  el.innerHTML = `<div class="cp-title">现存典章 · 原样颁布 <b class="good">稳定+1</b> / 改动 <b class="bad">稳定−3</b></div>${items}`;
 }
 
 function renderHeader(game) {
@@ -103,7 +121,9 @@ export function renderLog(game) {
   list.innerHTML = entries.map((e) => {
     // 国策条目要把玩家写的原文亮出来，否则回看时只剩史官转述
     const brief = e.kind === 'policy' && e.brief ? `<b>「${String(e.brief).slice(0, 100)}${e.brief.length > 100 ? '…' : ''}」</b>` : '';
-    return `<div class="log-item kind-${e.kind}"><span class="t">${e.turn}年·${KIND_LABEL[e.kind] || '记'}</span>${brief}${e.text}</div>`;
+    const tag = e.statute === 'continue' ? '<span class="tag continue">守成</span>'
+      : e.statute === 'reform' ? '<span class="tag reform">变法</span>' : '';
+    return `<div class="log-item kind-${e.kind}"><span class="t">${e.turn}年·${KIND_LABEL[e.kind] || '记'}</span>${tag}${brief}${e.text}</div>`;
   }).join('');
 }
 
@@ -115,23 +135,6 @@ export function renderLegend(game) {
     .map((n) => `<span class="legend-item ${n.isPlayer ? 'me' : ''}">
       <i style="background:${n.color}"></i>${n.name}${n.isPlayer ? '（你）' : ''}</span>`)
     .join('');
-}
-
-// 现行国策：上一条仍然"在桌上"，看得见才谈得上延续或改弦更张
-export function renderCurrentPolicy(game) {
-  const el = $('currentPolicy');
-  const policies = game.policies || [];
-  if (policies.length === 0) {
-    el.innerHTML = `<div class="current-policy none">尚未颁布国策——下方已备好一条建议，可直接修改后颁布。</div>`;
-    return;
-  }
-  const p = policies[policies.length - 1];
-  const domainName = { politics: '政治', economy: '经济', culture: '文化', military: '军事' }[p.domain] || '综合';
-  const verdictName = { positive: '民心归附', neutral: '波澜不惊', negative: '怨声四起' }[p.verdict] || '';
-  el.innerHTML = `<div class="current-policy">
-    <b>现行国策</b>（第 ${p.turn} 年 · ${domainName} · <span class="v-${p.verdict}">${verdictName}</span>）
-    <div class="cp-text">${p.text}</div>
-  </div>`;
 }
 
 // ---- 地图渲染 ----
@@ -339,7 +342,13 @@ export function showModal({ title, html, actions = [] }) {
     btn.textContent = a.label;
     if (a.danger) btn.className = 'danger';
     if (a.ghost) btn.className = 'ghost';
-    btn.onclick = () => a.onClick?.(() => root.replaceChildren());
+    // 未显式给出 onClick 的按钮（如默认的「知道了」）职责就是关闭弹窗——
+    // 此前默认按钮是死按钮，会卡死整个弹窗层
+    btn.onclick = () => {
+      const close = () => root.replaceChildren();
+      if (a.onClick) a.onClick(close);
+      else close();
+    };
     actRow.appendChild(btn);
   }
   root.replaceChildren(box);

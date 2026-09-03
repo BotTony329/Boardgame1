@@ -5,13 +5,13 @@ import {
 import { snapshotForAI } from './engine/nation.js';
 import { attackableCells } from './engine/war.js';
 import { requestPolicyVerdict } from './engine/ai-client.js';
-import { suggestPolicy } from './engine/suggestions.js';
+import { draftStatute } from './engine/statutes.js';
 import { TERRAINS, RULES } from './engine/constants.js';
 import { render, showModal, toast, setBusy, updateCellInfo } from './ui.js';
 
 let game = null;
 let busy = false;
-const ui = { selectedIdx: null, hoverIdx: null, attackMode: false, domain: 'politics' };
+const ui = { selectedIdx: null, hoverIdx: null, attackMode: false, domain: 'politics', currentDraft: null, draftOffset: 0 };
 
 const $ = (id) => document.getElementById(id);
 const fmt = (n) => Math.round(n).toLocaleString('zh-CN');
@@ -23,12 +23,47 @@ function renderAll() {
 }
 
 // ---------- 开局 ----------
+// 预填本回合的典章底稿：随机轮转现存国策之一（可点「换一策」切换）。
+// 原样颁布 = 守成（稳定+1）；改动 = 变法（稳定−3）——修改成本由此而来。
 function prefillPolicyInput() {
-  // 有政策史就沿用上一条（方便"看着改"），新局则给一条贴合国情的建议
-  const policies = game.policies || [];
-  $('policyText').value = policies.length
-    ? policies[policies.length - 1].text
-    : suggestPolicy(game);
+  const player = playerNation(game);
+  const statutes = player.statutes || [];
+  if (statutes.length === 0) {
+    ui.currentDraft = null;
+    $('policyText').value = '';
+    updateReformHint();
+    return;
+  }
+  ui.draftOffset = 0;
+  ui.currentDraft = draftStatute(player, game.turn);
+  $('policyText').value = ui.currentDraft.text;
+  updateReformHint();
+}
+
+// 「换一策」：在现存典章间轮换预填底稿
+function cycleDraft() {
+  const statutes = playerNation(game).statutes || [];
+  if (statutes.length === 0) { toast('国无典章，请自撰国策'); return; }
+  const base = game.turn - 1;
+  ui.draftOffset = (ui.draftOffset + 1) % statutes.length;
+  ui.currentDraft = statutes[(base + ui.draftOffset) % statutes.length];
+  $('policyText').value = ui.currentDraft.text;
+  updateReformHint();
+  renderAll();
+}
+
+// 实时提示当前输入的改革成本
+function updateReformHint() {
+  const el = $('reformHint');
+  const text = $('policyText').value.trim();
+  if (!ui.currentDraft || !text) { el.textContent = ''; el.className = ''; return; }
+  if (text === ui.currentDraft.text) {
+    el.textContent = '✔ 萧规曹随：原样延续既定国策，稳定 +1';
+    el.className = 'hint-continue';
+  } else {
+    el.textContent = '✦ 变法更张：改动既定国策，稳定 −3（新策将录入典章）';
+    el.className = 'hint-reform';
+  }
 }
 
 function boot() {
@@ -59,8 +94,10 @@ function showNewGameModal() {
     html: `
       <p class="hint">你将以一个随机格子的部落首领起步，凭文字政策招揽散落大陆的人口，聚众建国、称王、改制，直至纵横天下。</p>
       <ul class="rulelist">
-        <li>每回合颁布一条<b>自由文字国策</b>，由千问3.7 扮演的「天命史官」裁决其真实效果——得民心者人口来投，失民心者流民四散。</li>
+        <li>每回合须颁布一条<b>自由文字国策</b>，由千问3.7 扮演的「天命史官」裁决其真实效果——得民心者人口来投，失民心者流民四散。</li>
+        <li>开局随机继承两道<b>现存典章</b>（既有国策）。原样颁布为<b>守成</b>（稳定+1）；改动为<b>变法</b>（稳定−3），新策录入典章传之后世。</li>
         <li>人口达到 <b>600</b> 方可征兵，人口 <b>800</b> 加冕为王，人口 <b>5000</b> 且安定可改制共和。</li>
+        <li>城市与士兵随<b>文明等级</b>换装：治世城郭日盛，苛政则民生凋敝、等级跌落。</li>
         <li>每国资源禀赋不同：粮、矿、能决定你养得起多少兵、打得起多少仗。</li>
         <li>攻占 <b>${RULES.victoryCells}</b> 格则天下一统。</li>
       </ul>
@@ -99,14 +136,23 @@ async function submitPolicy() {
   setBusy(true);
   try {
     const snapshot = snapshotForAI(game, playerNation(game));
-    const result = await requestPolicyVerdict(snapshot, { text, domain: ui.domain });
-    const effects = { ...result, brief: text, domain: ui.domain };
+    // 与预填典章逐字一致 = 萧规曹随；否则为变法（引擎将结算相应的稳定度增减）
+    const continuation = Boolean(ui.currentDraft) && text === ui.currentDraft.text;
+    const result = await requestPolicyVerdict(snapshot, { text, domain: ui.domain, continuation });
+    const effects = {
+      ...result, brief: text, domain: ui.domain,
+      statute: continuation ? 'continue' : (ui.currentDraft ? 'reform' : undefined),
+    };
     const report = applyResolvedTurn(game, effects);
+    // 进入下回合：预填典章按轮转刷新，改革提示随之更新
+    ui.draftOffset = 0;
+    ui.currentDraft = draftStatute(playerNation(game), game.turn);
     renderAll();
     busy = false;
     setBusy(false);
     // 保留原文作为下一回合的底稿，方便在现有政策基础上修改
     $('policyText').value = text;
+    updateReformHint();
     showTurnReport(result, report);
   } catch (err) {
     busy = false;
@@ -120,11 +166,17 @@ function showTurnReport(result, report) {
   const verdictName = { positive: '民心归附', neutral: '波澜不惊', negative: '怨声四起' }[result.verdict];
   const deltaRow = (label, v, isPct) =>
     `<div class="kv"><span class="k">${label}</span><span class="${v >= 0 ? 'up' : 'down'}">${isPct ? signPct(v) : sign(v)}</span></div>`;
+  const statuteTag = result.statute === 'continue'
+    ? '<span class="verdict positive">萧规曹随 · 稳定+1</span>'
+    : result.statute === 'reform'
+      ? '<span class="verdict negative">变法更张 · 稳定−3</span>'
+      : '';
 
   showModal({
     title: '国策实录',
     html: `
     <span class="verdict ${result.verdict}">${verdictName}</span>
+    ${statuteTag}
     ${result.source === 'fallback' ? '<span class="verdict fallback-tag">离线·启发式裁定</span>' : '<span class="verdict fallback-tag">千问史官裁定</span>'}
     <p>${result.narrative || '史官对此缄默不语。'}</p>
     ${d ? `<div class="deltas">
@@ -156,7 +208,7 @@ function showPolicyArchive() {
   const rows = policies.map((p) => `
     <div class="archive-item">
       <div class="ar-head">
-        <span class="t">第 ${p.turn} 年 · ${domainName[p.domain] || '综合'}</span>
+        <span class="t">第 ${p.turn} 年 · ${domainName[p.domain] || '综合'}${p.statute === 'continue' ? ' · <span class="v-positive">守成</span>' : p.statute === 'reform' ? ' · <span class="v-negative">变法</span>' : ''}</span>
         <span class="v-${p.verdict}">${verdictName[p.verdict] || ''}</span>
       </div>
       <div class="ar-text">「${p.text}」</div>
@@ -311,6 +363,7 @@ function showBattleReport(report) {
 // ---------- 事件绑定 ----------
 function bindEvents() {
   $('btnPolicy').addEventListener('click', submitPolicy);
+  $('policyText').addEventListener('input', updateReformHint);
   $('policyText').addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitPolicy();
   });
@@ -331,10 +384,7 @@ function bindEvents() {
   document.addEventListener('click', (e) => {
     if (e.target.id === 'btnConscript') onConscript();
     if (e.target.id === 'btnAttackMode') toggleAttackMode();
-    if (e.target.id === 'btnSuggest') {
-      $('policyText').value = suggestPolicy(game);
-      toast('已换入一条新建议，可自由修改');
-    }
+    if (e.target.id === 'btnSuggest') cycleDraft();
     if (e.target.id === 'btnArchive') showPolicyArchive();
     if (e.target.id === 'btnNewGame') {
       showModal({

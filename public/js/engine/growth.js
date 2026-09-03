@@ -3,6 +3,7 @@ import { mulberry32, pick } from './rng.js';
 import { attackableCells, resolveAttack, conscript as doConscript } from './war.js';
 import { coronationDue, republicDue, crownKingdom, stageLabel } from './nation.js';
 import { civTierOf } from './civ.js';
+import { upsertStatute } from './statutes.js';
 
 const clamp01to100 = (v) => Math.max(0, Math.min(100, v));
 
@@ -220,7 +221,17 @@ export function resolveTurn(game, playerEffects = null) {
   let deltas = null;
   if (playerEffects) {
     deltas = applyPolicyEffects(player, playerEffects);
-    logs.push({ turn: game.turn, kind: 'policy', text: playerEffects.narrative, brief: playerEffects.brief });
+    // 典章结算：原样续行祖制者守成有序（稳定+1）；改动者承担变法成本（稳定−3），
+    // 且新策入典章成为今后的"现存国策"——修改成本由此进入核心循环
+    if (playerEffects.statute === 'continue') {
+      player.stability = clamp01to100(player.stability + 1);
+      deltas.stability += 1;
+    } else if (playerEffects.statute === 'reform') {
+      player.stability = clamp01to100(player.stability - 3);
+      deltas.stability -= 3;
+      upsertStatute(player, { text: playerEffects.brief, domain: playerEffects.domain, turn: game.turn });
+    }
+    logs.push({ turn: game.turn, kind: 'policy', text: playerEffects.narrative, brief: playerEffects.brief, statute: playerEffects.statute });
   }
 
   for (const nation of Object.values(game.nations)) {

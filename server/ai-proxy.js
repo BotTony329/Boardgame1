@@ -38,7 +38,10 @@ JSON 结构（字段缺一不可）：
   };
 
   const domainName = { politics: '政治', economy: '经济', culture: '文化', military: '军事' }[policy.domain] || '综合';
-  const user = `【当前国情】\n${JSON.stringify(snapshot, null, 1)}\n\n【本回合政策 · 领域：${domainName}】\n${policy.text}\n\n请裁决并只输出 JSON。`;
+  const nature = policy.continuation
+    ? '延续既定国策（萧规曹随，守成有序，效果宜平稳）'
+    : '推行新政（变法更张，吏民需要适应，或有短期震荡）';
+  const user = `【当前国情】\n${JSON.stringify(snapshot, null, 1)}\n\n【现存典章】\n${(state.statutes || []).map((s, i) => `${i + 1}. ${s}`).join('\n') || '无'}\n\n【本回合政策 · 领域：${domainName} · ${nature}】\n${policy.text}\n\n请裁决并只输出 JSON。`;
 
   return [
     { role: 'system', content: system },

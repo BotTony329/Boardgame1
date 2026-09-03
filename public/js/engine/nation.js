@@ -34,6 +34,7 @@ export function createNation({ id, name, leader, color, isPlayer, startCell, str
     strategy: strategy || null,
     enemies: [],
     civTier: 1, // 文明等级（engine/civ.js），开局即初始化以便记录晋升
+    statutes: [], // 现存典章（engine/statutes.js），开局由 newGame 随机授予
   };
 }
 
@@ -90,6 +91,7 @@ export function snapshotForAI(game, nation) {
     minerals: nation.minerals,
     energy: nation.energy,
     landYield: res,
+    statutes: (nation.statutes || []).map((s) => s.text.slice(0, 60)),
     recentPolicies: game.log
       .filter((e) => e.kind === 'policy' && e.turn > game.turn - 4)
       .map((e) => e.brief)

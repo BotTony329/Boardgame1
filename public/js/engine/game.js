@@ -4,6 +4,7 @@ import { resolveTurn } from './growth.js';
 import { conscript, attackableCells, resolveAttack } from './war.js';
 import { hashSeed, mulberry32, pick } from './rng.js';
 import { RULES, TERRAINS } from './constants.js';
+import { pickStatutes } from './statutes.js';
 
 export const SAVE_KEY = 'politgrid_save_v1';
 
@@ -50,6 +51,9 @@ export function newGame({ nationName, leaderName, seed }) {
   world.cells[playerCell].owner = 'p1';
   aiCells.forEach((idx, k) => { world.cells[idx].owner = `ai${k}`; });
 
+  // 玩家开局随机继承两道祖制：治理从一开始就是在既有制度上修修补补
+  player.statutes = pickStatutes(2, rng);
+
   return {
     version: 1,
     seed: seedStr,
@@ -86,7 +90,13 @@ export function loadGame() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const game = JSON.parse(raw);
-    return game?.map?.cells && game?.nations?.[game.playerId] ? game : null;
+    if (!game?.map?.cells || !game?.nations?.[game.playerId]) return null;
+    // 旧版存档迁移：补建典章（若无则随机授予，避免玩家面对空制度开局）
+    const player = game.nations[game.playerId];
+    if (!Array.isArray(player.statutes) || player.statutes.length === 0) {
+      player.statutes = pickStatutes(2);
+    }
+    return game;
   } catch {
     return null;
   }
@@ -111,6 +121,7 @@ export function applyResolvedTurn(game, effects) {
     pop: effects.populationChangePct,
     stab: effects.stabilityChange,
     appeal: effects.appealChange,
+    statute: effects.statute || null,
   });
   saveGame(game);
   return report;
