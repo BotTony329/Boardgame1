@@ -200,7 +200,7 @@ export function resolveTurn(game) {
   const events = [];
 
   // 持续施政：兑现效果、衰减效力、到期入典章
-  applyActivePolicies(game, logs);
+  const policyContribution = applyActivePolicies(game, logs);
 
   // 新回合：全军行军力重置（玩家在上一次结算后已可用本轮行军力行动）
   resetArmyMoves(game);
@@ -233,5 +233,5 @@ export function resolveTurn(game) {
   game.turn += 1;
   game.log.push(...logs);
   if (game.log.length > 400) game.log = game.log.slice(-300); // 编年史上限，防止存档无限膨胀
-  return { logs, events, migrants: Math.round(migrants) };
+  return { logs, events, migrants: Math.round(migrants), policyContribution: policyContribution.contribution };
 }

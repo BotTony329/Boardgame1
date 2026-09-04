@@ -200,11 +200,23 @@ function showTurnReport(report) {
   const d = report?.deltas;
   const deltaRow = (label, v) =>
     `<div class="kv"><span class="k">${label}</span><span class="${v >= 0 ? 'up' : 'down'}">${sign(v)}</span></div>`;
+  const pc = report?.policyContribution;
+  const activeCount = (game.activePolicies || []).length;
+  const cls = (v) => (v >= 0 ? 'up' : 'down');
+  const policyLine = pc
+    ? `<p class="hint">其中施政贡献（${activeCount} 道施行中，逐回合兑现）：`
+      + `吸引 <b class="${cls(pc.appeal)}">${sign(pc.appeal)}</b>`
+      + ` · 稳定 <b class="${cls(pc.stability)}">${sign(pc.stability)}</b>`
+      + ` · 人口 <b class="${cls(pc.pop)}">${sign(pc.pop)}</b>`
+      + ` · 粮 <b class="${cls(pc.food)}">${sign(pc.food)}</b>`
+      + ` · 矿 <b class="${cls(pc.minerals)}">${sign(pc.minerals)}</b>`
+      + ` · 能 <b class="${cls(pc.energy)}">${sign(pc.energy)}</b></p>`
+    : '';
 
   showModal({
     title: `岁末结算 · 第 ${game.turn - 1} 年`,
     html: `
-    <p class="hint">本年国力变化（含施政、生产、迁移与万国事件）：</p>
+    <p class="hint">本年国力变化（施政、生产、口粮、迁移与万国事件之合力）：</p>
     ${d ? `<div class="deltas">
       ${deltaRow('人口', d.pop)}
       ${deltaRow('稳定度', d.stability)}
@@ -213,7 +225,8 @@ function showTurnReport(report) {
       ${deltaRow('矿产', d.minerals)}
       ${deltaRow('能源', d.energy)}
     </div>` : ''}
-    ${report?.migrants ? `<p class="hint">本年四方共有约 ${report.migrants} 名散落部民迁入列国。</p>` : ''}`,
+    ${report?.migrants ? `<p class="hint">本年四方共有约 ${report.migrants} 名散落部民迁入列国。</p>` : ''}
+    ${policyLine}`,
     actions: [{
       label: '继续',
       onClick: (close) => { close(); processEvents(report?.events || []); },

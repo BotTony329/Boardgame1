@@ -26,9 +26,11 @@ export function policyFromVerdict(judged, { turn, domain, text }) {
 }
 
 // 回合结算时兑现所有施政；效力耗尽的自动入典章并写编年史。
+// 返回本回合施政贡献明细（按效力折算后的实际入账），供岁末结算报告明账展示。
 export function applyActivePolicies(game, logs) {
   const nation = game.nations[game.playerId];
   const active = game.activePolicies || [];
+  const contribution = { pop: 0, appeal: 0, stability: 0, food: 0, minerals: 0, energy: 0 };
   for (const p of active) {
     const s = p.potency / 100;
     nation.appeal = clampStat(nation.appeal + p.perTurn.appeal * s);
@@ -37,6 +39,12 @@ export function applyActivePolicies(game, logs) {
     nation.minerals = Math.max(0, nation.minerals + p.perTurn.minerals * s);
     nation.energy = Math.max(0, nation.energy + p.perTurn.energy * s);
     nation.pop = Math.max(5, nation.pop + p.perTurn.pop * s);
+    contribution.pop += p.perTurn.pop * s;
+    contribution.appeal += p.perTurn.appeal * s;
+    contribution.stability += p.perTurn.stability * s;
+    contribution.food += p.perTurn.food * s;
+    contribution.minerals += p.perTurn.minerals * s;
+    contribution.energy += p.perTurn.energy * s;
     p.potency -= POTENCY_DECAY_PER_TURN;
   }
 
@@ -51,6 +59,7 @@ export function applyActivePolicies(game, logs) {
       });
     }
   }
+  return { contribution, count: active.length };
 }
 
 // 效力条文案：把逐回合效果渲染成可读文本（供 UI 复用）
