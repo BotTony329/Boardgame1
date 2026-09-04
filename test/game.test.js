@@ -32,24 +32,25 @@ function TERRAIN_LAND(game, idx) {
 }
 
 test('启发式兜底：善政得分、苛政失分，输出形状与 AI 契约一致', () => {
-  const game = newGame({ nationName: '兜底邦', leaderName: '测', seed: 'h-seed' });
-  const snapshot = { nationName: '兜底邦', pop: 100, stability: 60, appeal: 12, turn: 1 };
+    const game = newGame({ nationName: '兜底邦', leaderName: '测', seed: 'h-seed' });
 
+  const snapshot = { nationName: '兜底邦', pop: 1000, food: 400, minerals: 80, energy: 60, stability: 60, appeal: 12, turn: 1 };
   const good = heuristicEvaluate(snapshot, { domain: 'economy', text: '轻徭薄赋，开仓放粮赈济流民，兴修水利劝课农桑' });
   assert.equal(good.verdict, 'positive');
-  assert.ok(good.populationChangePct > 0);
-  assert.ok(good.appealChange > 0);
+  assert.ok(good.perTurn.pop > 0, '善政应逐回合增人');
+  assert.ok(good.perTurn.appeal > 0);
+  assert.ok(good.perTurn.food > 0, '劝农水利应逐回合增粮');
   assert.equal(good.source, 'fallback');
 
   const bad = heuristicEvaluate(snapshot, { domain: 'politics', text: '加税横征，宵禁戒严，镇压异见' });
   assert.equal(bad.verdict, 'negative');
-  assert.ok(bad.populationChangePct < 0);
-  assert.ok(bad.appealChange < 0);
+  assert.ok(bad.perTurn.pop < 0);
+  assert.ok(bad.perTurn.appeal < 0);
 
   const blank = heuristicEvaluate(snapshot, { domain: 'culture', text: 'zzz 无关内容' });
   assert.ok(['positive', 'neutral', 'negative'].includes(blank.verdict));
   for (const k of ['food', 'minerals', 'energy']) {
-    assert.ok(Number.isFinite(blank.resourceChanges[k]));
+    assert.ok(Number.isFinite(blank.perTurn[k]));
   }
 });
 
@@ -68,9 +69,8 @@ test('颁布施政：变法入列扣稳定并录档案，守成回满效力+1稳
   const game = newGame({ nationName: '档案邦', leaderName: '测', seed: 'archive-seed' });
   playerNation(game).food = 99999; // 防饥荒干扰
   const judged = {
-    verdict: 'positive', narrative: '万民称便', populationChangePct: 2,
-    stabilityChange: 3, appealChange: 4,
-    resourceChanges: { food: 0, minerals: 0, energy: 0 },
+    verdict: 'positive', narrative: '万民称便',
+    perTurn: { pop: 2, appeal: 4, stability: 3, food: 30, minerals: 0, energy: 0 },
   };
 
   // 新政 = 变法：−3 稳定、进入施政列表、录入典章与档案
@@ -80,10 +80,12 @@ test('颁布施政：变法入列扣稳定并录档案，守成回满效力+1稳
   assert.equal(r.statuteEffect, 'reform');
   assert.equal(game.activePolicies.length, 1, '施政应入列');
   assert.equal(Math.round(playerNation(game).stability), 57, '变法 −3 稳定');
+  assert.equal(game.activePolicies[0].perTurn.food, 30, '千问定夺的逐回合量直通施政');
   const p = game.policies[0];
   assert.equal(p.turn, turnBefore, '档案回合号应为颁布时的回合');
   assert.equal(p.text, '轻徭薄赋，与民休息');
   assert.equal(p.verdict, 'positive');
+  assert.equal(p.perTurn.food, 30, '档案记录逐回合量');
 
   // 守成 = 同文重申：效力回满、稳定 +1、不新增施政
   game.activePolicies[0].potency = 40;
@@ -154,8 +156,8 @@ test('守成与变法：新政录入典章置前，续行不增典章', () => {
 
   const newPolicyText = '开凿新渠引水入城，垦荒千亩，减田租至二十分之一';
   const r = enactPolicy(game, {
-    verdict: 'positive', narrative: '气象一新', populationChangePct: 2, stabilityChange: 0,
-    appealChange: 3, resourceChanges: { food: 0, minerals: 0, energy: 0 },
+    verdict: 'positive', narrative: '气象一新',
+    perTurn: { pop: 1, appeal: 3, stability: 0, food: 10, minerals: 0, energy: 0 },
   }, { text: newPolicyText, domain: 'economy', continuation: false });
   assert.equal(r.statuteEffect, 'reform');
   assert.equal(n.statutes.length, statutesBefore + 1, '新策应录入典章');
@@ -163,8 +165,8 @@ test('守成与变法：新政录入典章置前，续行不增典章', () => {
 
   // 同文再颁 = 守成续行，典章不重复录入
   const r2 = enactPolicy(game, {
-    verdict: 'neutral', narrative: '一如常年', populationChangePct: 0, stabilityChange: 0,
-    appealChange: 0, resourceChanges: { food: 0, minerals: 0, energy: 0 },
+    verdict: 'neutral', narrative: '一如常年',
+    perTurn: { pop: 0, appeal: 0, stability: 0, food: 0, minerals: 0, energy: 0 },
   }, { text: newPolicyText, domain: 'economy', continuation: true });
   assert.equal(r2.statuteEffect, 'continue');
   assert.equal(n.statutes.length, statutesBefore + 1, '守成不新增典章');

@@ -136,10 +136,7 @@ export function enactPolicy(game, judged, { text, domain, continuation }) {
     statuteEffect = 'continue';
     game.log.push({ turn: game.turn, kind: 'policy', brief: text, statute: 'continue', text: `${nation.name}重申「${String(text).slice(0, 20)}…」之政，萧规曹随，民心益安。` });
   } else {
-    const policy = policyFromVerdict(judged, {
-      turn: game.turn, domain, text,
-      stock: { pop: nation.pop, food: nation.food, minerals: nation.minerals, energy: nation.energy },
-    });
+    const policy = policyFromVerdict(judged, { turn: game.turn, domain, text });
     game.activePolicies.push(policy);
     nation.stability = Math.max(0, nation.stability - 3);
     statuteEffect = 'reform';
@@ -154,9 +151,7 @@ export function enactPolicy(game, judged, { text, domain, continuation }) {
     text,
     verdict: judged.verdict,
     narrative: judged.narrative,
-    pop: judged.populationChangePct,
-    stab: judged.stabilityChange,
-    appeal: judged.appealChange,
+    perTurn: { ...judged.perTurn },
     statute: statuteEffect,
   });
   saveGame(game);

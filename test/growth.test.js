@@ -17,15 +17,11 @@ test('持续施政：效果逐回合兑现、效力衰减、耗尽自动载入�
   n.statutes = [];
 
   const judged = {
-    verdict: 'positive', narrative: '民大悦', populationChangePct: 5,
-    stabilityChange: 10, appealChange: 5,
-    resourceChanges: { food: 40, minerals: 0, energy: 0 },
+    verdict: 'positive', narrative: '民大悦',
+    perTurn: { pop: 3, appeal: 2, stability: 3, food: 24, minerals: 0, energy: 0 },
   };
-  // 力度换算：吸引 5×0.4=2；稳定 10×0.3=3；人口 1000×5%×0.05=2.5→3；粮 500×40%×0.12=24
-  const policy = policyFromVerdict(judged, {
-    turn: 1, domain: 'economy', text: '轻徭薄赋',
-    stock: { pop: 1000, food: 500, minerals: 100, energy: 100 },
-  });
+  // 数值由千问直接定夺：引擎原样落账
+  const policy = policyFromVerdict(judged, { turn: 1, domain: 'economy', text: '轻徭薄赋' });
   assert.equal(policy.perTurn.appeal, 2);
   assert.equal(policy.perTurn.stability, 3);
   assert.equal(policy.perTurn.pop, 3);

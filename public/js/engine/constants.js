@@ -18,6 +18,6 @@ export const RULES = {
   republicStability: 50,
   victoryCells: 120,        // 统一 120 格获胜
   defeatPop: 20,            // 人口跌破此数 → 国家崩解
-  garrisonFoodPerSoldier: 0.35,
-  foodPerPop: 0.12,
+  garrisonFoodPerSoldier: 0.2,
+  foodPerPop: 0.06,
 };

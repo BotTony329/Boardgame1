@@ -1,26 +1,19 @@
 // ===== 持续施政系统 =====
-// 政策经 AI 裁决力度后进入"施政中"：效果逐回合兑现，效力（potency 0~100）
-// 每回合衰减，耗尽后自动载入典章。数值在颁布时按国力折算为固定量，
-// 避免百分比逐回合复利导致失控；续行相同文本可回满效力（守成）。
+// 政策经千问裁定「逐回合持续量」（perTurn，数值由 AI 依国情定夺）后进入"施政中"：
+// 效果逐回合兑现，效力（potency 0~100）每回合衰减，耗尽后自动载入典章；
+// 续行相同文本可回满效力（守成）。
 
 import { upsertStatute } from './statutes.js';
 
 // 施政数量不设硬上限：每次颁布的变法成本（稳定−3）与效力自然衰减即是约束
 export const POTENCY_DECAY_PER_TURN = 15;
 
-const round1 = (v) => Math.round(v * 10) / 10;
 const clampStat = (v) => Math.max(0, Math.min(100, v));
 
-// 把 AI 裁决的一次性力度换算为逐回合固定量（按颁布时国力折算，防止百分比逐回合复利）
-export function policyFromVerdict(judged, { turn, domain, text, stock }) {
-  const perTurn = {
-    appeal: Math.max(-6, Math.min(8, round1(judged.appealChange * 0.4))),
-    stability: Math.max(-6, Math.min(6, round1(judged.stabilityChange * 0.3))),
-    pop: clampAbs(Math.round(stock.pop * (judged.populationChangePct / 100) * 0.05), 80),
-    food: clampAbs(Math.round(stock.food * (judged.resourceChanges.food / 100) * 0.12), 60),
-    minerals: clampAbs(Math.round(stock.minerals * (judged.resourceChanges.minerals / 100) * 0.12), 60),
-    energy: clampAbs(Math.round(stock.energy * (judged.resourceChanges.energy / 100) * 0.12), 60),
-  };
+// 颁布：把千问裁定的 perTurn 效果落到施政列表（引擎只钳形状，不折算数值）
+export function policyFromVerdict(judged, { turn, domain, text }) {
+  const base = judged.perTurn || {};
+  const zero = { pop: 0, appeal: 0, stability: 0, food: 0, minerals: 0, energy: 0 };
   return {
     id: `pol-${turn}-${Math.floor(Math.random() * 1e6).toString(36)}`,
     turn,
@@ -28,12 +21,8 @@ export function policyFromVerdict(judged, { turn, domain, text, stock }) {
     text,
     verdict: judged.verdict,
     potency: 100,
-    perTurn,
+    perTurn: { ...zero, ...base },
   };
-}
-
-function clampAbs(v, limit) {
-  return Math.max(-limit, Math.min(limit, v));
 }
 
 // 回合结算时兑现所有施政；效力耗尽的自动入典章并写编年史。

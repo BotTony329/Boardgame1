@@ -8,6 +8,7 @@ import { classifyArmyTarget, cellDefense, armyAt } from './engine/armies.js';
 import { requestPolicyVerdict } from './engine/ai-client.js';
 import { draftStatute } from './engine/statutes.js';
 import { TERRAINS, RULES } from './engine/constants.js';
+import { policyEffectsText } from './engine/policies.js';
 import { render, showModal, toast, setBusy, updateCellInfo } from './ui.js';
 
 let game = null;
@@ -169,7 +170,8 @@ function showEnactReport(result, statuteEffect) {
     ${statuteTag}
     ${result.source === 'fallback' ? '<span class="verdict fallback-tag">离线·启发式裁定</span>' : '<span class="verdict fallback-tag">千问史官裁定</span>'}
     <p>${result.narrative || '史官对此缄默不语。'}</p>
-    <p class="hint">此政已列入施政，逐回合生效；效力随岁月衰减，耗尽后载入典章。可随时下诏罢行。点「进入下一回合」推进时间。</p>
+    <p class="hint">史官定夺的施政力度（逐回合）：${policyEffectsText({ perTurn: result.perTurn })}</p>
+    <p class="hint">此政已列入施政，持续生效；效力随岁月衰减，耗尽后载入典章。可随时下诏罢行。点「进入下一回合」推进时间。</p>
     ${result.risks?.length ? `<p class="risks">⚠ ${result.risks.join('；')}</p>` : ''}`,
   });
 }
@@ -227,7 +229,7 @@ function showPolicyArchive() {
         <span class="v-${p.verdict}">${verdictName[p.verdict] || ''}</span>
       </div>
       <div class="ar-text">「${p.text}」</div>
-      <div class="ar-deltas hint">人口 ${signPct(p.pop)} · 稳定 ${sign(p.stab)} · 吸引 ${sign(p.appeal)}</div>
+      <div class="ar-deltas hint">${p.perTurn ? `逐回合：${policyEffectsText({ perTurn: p.perTurn })}` : '早期档案'}</div>
       <div class="ar-narrative hint">${p.narrative || ''}</div>
     </div>`).join('');
   showModal({ title: `政策档案（${policies.length} 道）`, html: rows });
