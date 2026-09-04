@@ -112,8 +112,8 @@ test('施政不设硬上限：多道并行皆可颁布，罢行即刻生效', ()
   const n = playerNation(game);
   n.food = 99999;
   const judged = {
-    verdict: 'neutral', narrative: '如常', populationChangePct: 0, stabilityChange: 0,
-    appealChange: 0, resourceChanges: { food: 0, minerals: 0, energy: 0 },
+    verdict: 'neutral', narrative: '如常',
+    perTurn: { pop: 0, appeal: 0, stability: 0, food: 0, minerals: 0, energy: 0 },
   };
   for (let i = 0; i < 8; i++) {
     const r = enactPolicy(game, judged, { text: `施政之策第${i}道：劝农桑、修水利、通商路`, domain: 'economy', continuation: false });
