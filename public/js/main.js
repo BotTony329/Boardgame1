@@ -76,6 +76,14 @@ function boot() {
       nationName: '演示之邦', leaderName: '观察者',
       seed: params.get('seed') || 'demo',
     });
+    // ?demoArmy=1：预征募并组建一支军团，便于直接预览/调试军团渲染与指挥
+    if (params.has('demoArmy')) {
+      playerNation(game).pop = 20000;
+      playerNation(game).food = 99999;
+      playerNation(game).minerals = 9999;
+      doConscript(game, 600);
+      doFormArmy(game, 500);
+    }
     renderAll();
     prefillPolicyInput();
     return;
@@ -401,7 +409,12 @@ function bindEvents() {
     if (e.target.id === 'btnFormArmy') {
       const size = Math.floor(Number($('armySize').value) || 0);
       const r = doFormArmy(game, size);
-      if (r.ok) { toast(`军团组建：${size} 人成军`); renderAll(); }
+      if (r.ok) {
+        ui.selectedArmyId = r.army.id;
+        ui.colonizePending = null;
+        toast(`军团成军（${size} 人）并已接管指挥：点击相邻格行动（绿=调防，红=开战/镇压）`);
+        renderAll();
+      }
       else toast(r.reason);
     }
     const selBtn = e.target.closest('[data-army-sel]');
@@ -512,6 +525,15 @@ function bindEvents() {
     // 军团指挥：选中军团后点击相邻格执行上下文行动
     const army = (game.armies || []).find((a) => a.id === ui.selectedArmyId);
     if (army && idx !== army.cell) {
+      // 点到己方另一支军团：切换指挥，而不是把它当移动目标
+      const ownTarget = armyAt(game, idx);
+      if (ownTarget && ownTarget.owner === game.playerId) {
+        ui.selectedArmyId = ownTarget.id;
+        ui.colonizePending = null;
+        toast('指挥已移交该军团：点击相邻格行动（绿=调防，红=开战/镇压）');
+        renderAll();
+        return;
+      }
       const kind = classifyArmyTarget(game, army, idx);
       if (kind === 'move') {
         const r = doMoveArmy(game, army.id, idx);

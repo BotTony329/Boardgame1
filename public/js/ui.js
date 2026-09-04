@@ -589,15 +589,6 @@ export function renderMap(game, ui) {
     });
   }
 
-  // 野战军团：兵符 + 兵力 + 国色环；选中的军团罩金色光环
-  for (const army of game.armies || []) {
-    const nation = game.nations[army.owner];
-    if (!nation) continue;
-    drawArmyToken(ctx, (army.cell % w) * CS, Math.floor(army.cell / w) * CS, {
-      army, color: nation.color, tier: armyTierOf(nation).level,
-      selected: ui.selectedArmyId === army.id,
-    });
-  }
 
   // 都城标记与国名统一收在政治识别层，避免旗帜、建筑和文字互相遮挡。
   for (const nation of Object.values(game.nations)) {
@@ -611,6 +602,16 @@ export function renderMap(game, ui) {
     ctx.lineWidth = nation.isPlayer ? 2 : 1;
     ctx.stroke();
     drawNationLabel(ctx, game, nation, idx);
+  }
+
+  // 野战军团：兵符 + 兵力 + 国色环；选中的军团罩金色光环
+  for (const army of game.armies || []) {
+    const nation = game.nations[army.owner];
+    if (!nation) continue;
+    drawArmyToken(ctx, (army.cell % w) * CS, Math.floor(army.cell / w) * CS, {
+      army, color: nation.color, tier: armyTierOf(nation).level,
+      selected: ui.selectedArmyId === army.id,
+    });
   }
 
   if (ui.hoverIdx != null) {
@@ -721,40 +722,52 @@ function drawNationLabel(ctx, game, nation, capitalIndex) {
 
 // 野战军团兵符：优先美术包（art/units/…），缺失时画盾徽；外环国色，选中金环
 function drawArmyToken(ctx, x, y, { army, color, tier, selected }) {
-  const size = 15;
+  const size = 18;
   const tx = x + (CS - size) / 2;
   const ty = y + (CS - size) / 2;
+  // 底板：让兵符在任何地形上都清晰可辨
+  ctx.fillStyle = 'rgba(12, 16, 20, .78)';
+  ctx.beginPath();
+  ctx.roundRect(tx - 1.5, ty - 1.5, size + 3, size + 3, 4);
+  ctx.fill();
+  if (!drawArt(ctx, ART_PATHS.unit(tier), tx, ty, size, size)) {
+    ctx.fillStyle = '#6e7b8a';
+    ctx.fillRect(tx + 4, ty + 1, size - 8, size * 0.55);
+    ctx.beginPath();
+    ctx.moveTo(tx + 4, ty + size * 0.55);
+    ctx.lineTo(tx + size - 4, ty + size * 0.55);
+    ctx.lineTo(tx + size / 2, ty + size - 1);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // 国色旗标（左上角）+ 外环
+  ctx.fillStyle = color;
+  ctx.fillRect(x + 1, y + 1, 5, 4);
+  ctx.strokeStyle = 'rgba(255,255,255,.35)';
+  ctx.lineWidth = 0.6;
+  ctx.strokeRect(x + 1, y + 1, 5, 4);
+  ctx.beginPath();
+  ctx.arc(x + CS / 2, y + CS / 2, CS * 0.58, 0, Math.PI * 2);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = selected ? 2.6 : 1.4;
+  ctx.stroke();
   if (selected) {
     ctx.beginPath();
-    ctx.arc(x + CS / 2, y + CS / 2, CS * 0.66, 0, Math.PI * 2);
+    ctx.arc(x + CS / 2, y + CS / 2, CS * 0.74, 0, Math.PI * 2);
     ctx.strokeStyle = '#ffd97a';
     ctx.lineWidth = 2;
     ctx.stroke();
   }
-  if (!drawArt(ctx, ART_PATHS.unit(tier), tx, ty, size, size)) {
-    ctx.fillStyle = '#5d6a78';
-    ctx.fillRect(tx + 3, ty, size - 6, size * 0.55);
-    ctx.beginPath();
-    ctx.moveTo(tx + 3, ty + size * 0.55);
-    ctx.lineTo(tx + size - 3, ty + size * 0.55);
-    ctx.lineTo(tx + size / 2, ty + size);
-    ctx.closePath();
-    ctx.fill();
-  }
-  ctx.beginPath();
-  ctx.arc(x + CS / 2, y + CS / 2, CS * 0.52, 0, Math.PI * 2);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.6;
-  ctx.stroke();
+  // 兵力数字（右下，描边保证可读）
   ctx.font = 'bold 8px sans-serif';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'alphabetic';
   const label = fmtShort(army.soldiers);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(10, 12, 15, .85)';
-  ctx.strokeText(label, x + CS - 1, y + CS - 1.5);
+  ctx.lineWidth = 2.4;
+  ctx.strokeStyle = 'rgba(10, 12, 15, .9)';
+  ctx.strokeText(label, x + CS - 0.5, y + CS - 0.5);
   ctx.fillStyle = '#ffe4a0';
-  ctx.fillText(label, x + CS - 1, y + CS - 1.5);
+  ctx.fillText(label, x + CS - 0.5, y + CS - 0.5);
 }
 
 // 都城驻军角标：优先美术包（art/units/…），缺失时画盾徽 + 兵力数字
