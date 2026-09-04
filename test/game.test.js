@@ -105,25 +105,24 @@ test('颁布施政：变法入列扣稳定并录档案，守成回满效力+1稳
   assert.equal(legacy.activePolicies.length, 1);
 });
 
-test('施政上限与取消：政务满 4 道拒颁新策，罢行即刻停止', () => {
+test('施政不设硬上限：多道并行皆可颁布，罢行即刻生效', () => {
   const game = newGame({ nationName: '上限邦', leaderName: '测', seed: 'cap-seed' });
-  playerNation(game).food = 99999;
+  const n = playerNation(game);
+  n.food = 99999;
   const judged = {
     verdict: 'neutral', narrative: '如常', populationChangePct: 0, stabilityChange: 0,
     appealChange: 0, resourceChanges: { food: 0, minerals: 0, energy: 0 },
   };
-  for (let i = 0; i < 4; i++) {
-    const r = enactPolicy(game, judged, { text: `施政之策第${i}道：劝农桑、修水利`, domain: 'economy', continuation: false });
-    assert.equal(r.ok, true, `第 ${i + 1} 道应可颁布`);
-    playerNation(game).stability = 60; // 重置，避免连续变法把稳定扣光影响后续断言
+  for (let i = 0; i < 8; i++) {
+    const r = enactPolicy(game, judged, { text: `施政之策第${i}道：劝农桑、修水利、通商路`, domain: 'economy', continuation: false });
+    assert.equal(r.ok, true, `第 ${i + 1} 道应可颁布（不设硬上限）`);
+    n.stability = 60; // 重置，隔离变法成本对后续断言的干扰
   }
-  const r = enactPolicy(game, judged, { text: '第五道施政：大开互市', domain: 'economy', continuation: false });
-  assert.equal(r.ok, false, '政务满 4 道应拒绝新策');
+  assert.equal(game.activePolicies.length, 8, '八道施政并行');
 
   const cancel = cancelPolicy(game, game.activePolicies[0].id);
   assert.equal(cancel.ok, true);
-  assert.equal(game.activePolicies.length, 3, '罢行后腾出政务');
-  assert.equal(enactPolicy(game, judged, { text: '第五道施政：大开互市', domain: 'economy', continuation: false }).ok, true);
+  assert.equal(game.activePolicies.length, 7, '罢行即刻移出施政');
 });
 
 test('典章制度：开局随机继承两道祖制，同种子可复现，逐回合轮转预填', () => {

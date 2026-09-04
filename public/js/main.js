@@ -7,7 +7,6 @@ import { snapshotForAI } from './engine/nation.js';
 import { classifyArmyTarget, cellDefense, armyAt } from './engine/armies.js';
 import { requestPolicyVerdict } from './engine/ai-client.js';
 import { draftStatute } from './engine/statutes.js';
-import { MAX_ACTIVE_POLICIES } from './engine/policies.js';
 import { TERRAINS, RULES } from './engine/constants.js';
 import { render, showModal, toast, setBusy, updateCellInfo } from './ui.js';
 
@@ -62,9 +61,6 @@ function updateReformHint() {
   if ((game.activePolicies || []).some((p) => p.text === text)) {
     el.textContent = '✔ 守成续行：重申现行施政，效力回满，稳定 +1';
     el.className = 'hint-continue';
-  } else if ((game.activePolicies || []).length >= MAX_ACTIVE_POLICIES) {
-    el.textContent = '⚠ 政务已满（至多 4 道施行）：请先罢行一道，方可颁布新策';
-    el.className = 'hint-reform';
   } else {
     el.textContent = '✦ 变法更张：颁布新施政（持续生效），稳定 −3，新策录入典章';
     el.className = 'hint-reform';

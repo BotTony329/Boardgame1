@@ -7,7 +7,7 @@ import { hashSeed, mulberry32, pick } from './rng.js';
 import { RULES, TERRAINS } from './constants.js';
 import { pickStatutes, upsertStatute } from './statutes.js';
 import { getRelation, adjustRelation, setRelation, establishRoute, breakRoute, routeBetween, routeYield } from './world.js';
-import { policyFromVerdict, MAX_ACTIVE_POLICIES } from './policies.js';
+import { policyFromVerdict } from './policies.js';
 
 export const SAVE_KEY = 'politgrid_save_v1';
 
@@ -136,9 +136,6 @@ export function enactPolicy(game, judged, { text, domain, continuation }) {
     statuteEffect = 'continue';
     game.log.push({ turn: game.turn, kind: 'policy', brief: text, statute: 'continue', text: `${nation.name}重申「${String(text).slice(0, 20)}…」之政，萧规曹随，民心益安。` });
   } else {
-    if (game.activePolicies.length >= MAX_ACTIVE_POLICIES) {
-      return { ok: false, reason: `政务已满（至多 ${MAX_ACTIVE_POLICIES} 道施行），请先取消一道` };
-    }
     const policy = policyFromVerdict(judged, {
       turn: game.turn, domain, text,
       stock: { pop: nation.pop, food: nation.food, minerals: nation.minerals, energy: nation.energy },

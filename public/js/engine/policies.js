@@ -5,7 +5,7 @@
 
 import { upsertStatute } from './statutes.js';
 
-export const MAX_ACTIVE_POLICIES = 4;
+// 施政数量不设硬上限：每次颁布的变法成本（稳定−3）与效力自然衰减即是约束
 export const POTENCY_DECAY_PER_TURN = 15;
 
 const round1 = (v) => Math.round(v * 10) / 10;

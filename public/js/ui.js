@@ -6,7 +6,7 @@ import { civTierOf, armyTierOf, nextCivGap } from './engine/civ.js';
 import { drawArt, ART_PATHS } from './engine/art.js';
 import { getRelation, relationLabel, atWar, routeYield } from './engine/world.js';
 import { DIPLO_COSTS, canAfford, playerNation } from './engine/game.js';
-import { MAX_ACTIVE_POLICIES, policyEffectsText } from './engine/policies.js';
+import { policyEffectsText } from './engine/policies.js';
 import { classifyArmyTarget, cellDefense, armyAt, armiesOf, armySoldiersTotal } from './engine/armies.js';
 
 const $ = (id) => document.getElementById(id);
@@ -80,7 +80,7 @@ export function renderActivePolicies(game) {
       <div class="hint">${policyEffectsText(p)} · 效力 ${Math.round(p.potency)}/100</div>
       <div class="potency"><i style="width:${Math.max(0, p.potency)}%"></i></div>
     </div>`).join('');
-  el.innerHTML = `<div class="ap-head">施政中（${list.length}/${MAX_ACTIVE_POLICIES}）</div>${rows}`;
+  el.innerHTML = `<div class="ap-head">施政中 · ${list.length} 道</div>${rows}`;
 }
 
 function renderHeader(game) {
